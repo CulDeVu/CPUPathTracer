@@ -1,0 +1,372 @@
+#define _CRT_SECURE_NO_DEPRECATE
+
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <stdlib.h>
+#include <math.h>
+#include <vector>
+#include <climits>
+#include <time.h>
+#include <chrono>
+#include <random>
+
+using namespace std;
+using std::cout;
+using std::cin;
+
+#include "triangle.h"
+#include "color.h"
+#include "material.h"
+#include "model.h"
+#include "shape.h"
+#include "useful.h"
+#include "vec3.h"
+
+#include "embree2\rtcore.h"
+#include "embree2\rtcore_ray.h"
+
+const int imageWidth = 500,
+		  imageHeight = 500;
+const int NUM_SAMPLES = 500,
+		  NUM_BOUNCES = 3;
+
+const color SKY_ILLUMINATION = color(12, 12, 12); // color(17, 12, 4);
+
+color buffer[imageWidth][imageHeight];
+#include "GLRender.h"
+
+#pragma comment(lib, "embree.lib")
+
+vec3 randRayInSphere() {
+	float rx = 0, ry = 0, rz = 0;
+
+	// technically, this is faster, sooooo :P
+	while (rx*rx + ry*ry + rz*rz <= 1.0f)
+	{
+		rx = 2 * nrand() - 1.0f;
+		ry = 2 * nrand() - 1.0f;
+		rz = 2 * nrand() - 1.0f;
+		if (rx*rx + ry*ry + rz*rz >= 0.98f)
+			continue;
+		break;
+	}
+	return vec3(rx, ry, rz).normalized();
+}
+
+vec3 randHemisphereRay(vec3 norm)
+{
+	vec3 castRay = randRayInSphere();
+	if (dot(castRay, norm) < 0)
+		castRay = castRay * -1;
+	return castRay.normalized();
+}
+
+vector<shape*> shapes;
+vector<triangle> tris;
+
+RTCScene scene;
+
+RTCRay makeRay(vec3 o, vec3 dir)
+{
+	RTCRay ray;
+	ray.org[0] = o.x; ray.org[1] = o.y; ray.org[2] = o.z;
+	ray.dir[0] = dir.x; ray.dir[1] = dir.y; ray.dir[2] = dir.z;
+	ray.tnear = 0;
+	ray.tfar = maxFloat;
+	ray.geomID = RTC_INVALID_GEOMETRY_ID;
+	return ray;
+}
+
+float roundDown(float x)
+{
+	float ret = int(x);
+	if (x < 0)
+		--ret;
+	return ret;
+}
+
+int pdfs[400] = { 0 };
+int maxPDF = 0;
+color radiance(vec3 o, vec3 ray, float bounces)
+{
+	vec3 oDir = ray * -1;
+	
+	RTCRay rtcNegODir = makeRay(o, ray);
+	rtcIntersect(scene, rtcNegODir);
+	if (rtcNegODir.tfar == maxFloat)
+	{
+		return SKY_ILLUMINATION;
+	}
+
+	/*model* curModel = 0;
+	for (int m = 0; m < models.size(); ++m)
+	{
+		if (models[m]->geom_id == rtcNegODir.geomID)
+			curModel = models[m];
+	}
+	if (curModel == 0)
+		return color(1, 0, 0); // unknown material*/
+	model* curModel = models[rtcNegODir.geomID];
+
+	float u = 1, v = 1;
+	if (curModel->uv.size() != 0)
+	{
+		int primId = rtcNegODir.primID;
+		float u0, u1, u2;
+		float v0, v1, v2;
+
+		//printf("%d, %d, %d\n", 3 * primId + 0, curModel->indices.size(), curModel->uv.size());
+
+		u0 = curModel->uv[2 * curModel->indices[3 * primId + 0]];
+		u1 = curModel->uv[2 * curModel->indices[3 * primId + 1]];
+		u2 = curModel->uv[2 * curModel->indices[3 * primId + 2]];
+
+		v0 = curModel->uv[2 * curModel->indices[3 * primId + 0] + 1];
+		v1 = curModel->uv[2 * curModel->indices[3 * primId + 1] + 1];
+		v2 = curModel->uv[2 * curModel->indices[3 * primId + 2] + 1];
+
+		u = rtcNegODir.u * u1 + rtcNegODir.v * u2 + (1 - rtcNegODir.u - rtcNegODir.v) * u0;
+		v = rtcNegODir.u * v1 + rtcNegODir.v * v2 + (1 - rtcNegODir.u - rtcNegODir.v) * v0;
+		u = u - roundDown(u);
+		v = v - roundDown(v);
+		//u = u1 - roundDown(u1);
+		//v = v1 - roundDown(v1);
+	}
+
+	float t = rtcNegODir.tfar;
+	t -= 0.001f;
+	if (t < 0.001f)
+		return color(0, 0, 0);
+
+	vec3 pos = o + ray * t;
+	vec3 normal = vec3(-rtcNegODir.Ng[0], -rtcNegODir.Ng[1], -rtcNegODir.Ng[2]).normalized();
+	if (dot(normal, ray * -1) < 0)
+		normal = normal * -1;
+
+	material mat = curModel->mat;
+
+	color total = color();
+	total = total + mat.Emmision;
+
+	if (bounces == 0)
+		return total;
+
+	// sphere sampling
+	/*{
+		float invPDF = 1;
+
+		vec3 d = vec3(0.0, 3, 1) - pos;
+		float rad = 1;
+		float dLen = d.length();
+		if (dLen <= 0.01f)
+			dLen = 0.01f;
+
+		float cos_maxangle;
+		if (1 - rad*rad / (dLen*dLen) <= 0)
+			cos_maxangle = 0.0f;
+		else
+			cos_maxangle = sqrt(1 - rad*rad / (dLen*dLen));
+		//float cos_maxangle = cos(asin(rad*rad / (dLen*dLen)));
+
+		vec3 castRay = d.normalized();
+
+		invPDF = (2 * 3.14159 * (1 - cos_maxangle));
+
+		float cosAngle = dot(castRay.normalized(), normal);
+		if (cosAngle < 0)
+			cosAngle = 0;
+
+		color f_r = BRDF(mat, normal, castRay, ray * -1);
+		color L_i = radiance(pos, castRay, 0);
+
+		total = total + f_r.mul(L_i) * cosAngle * invPDF / 2;
+	}*/
+
+	float d1 = nrand();
+	//if (d1 < mat.Fresnel.r)
+	{
+		float pdf;
+		vec3 iDir = sampleMicrofacet(mat, normal, u, v, ray * -1, &pdf);
+		vec3 h = (oDir + iDir).normalized();
+
+		float f = Fresnel(iDir, h, mat.Fresnel.r);
+		if (d1 > f || pdf == 123456)
+		{
+			vec3 iDir = randCosineWeightedRay(normal);
+
+			float cosAngle = max(dot(iDir, normal), 0.01);
+			float pdf = cosAngle / PI;
+
+			color f_r = lambertBRDF(mat, normal, u, v, iDir, ray * -1);
+			color L_i = radiance(pos, iDir, bounces - 1);
+			color weight = f_r * cosAngle / pdf;
+
+			total = f_r.mul(L_i) * cosAngle / pdf;
+		}
+		else
+		{
+			float cosAngle = max(dot(iDir, normal), 0.01);
+			
+			color f_r = microfacetBRDF(mat, normal, u, v, iDir, ray * -1);
+			color L_i = radiance(pos, iDir, bounces - 1);
+			color weight = f_r * cosAngle / pdf;
+
+			total = f_r.mul(L_i) * cosAngle / pdf;
+		}
+	}
+
+	// diffuse sampling
+	/*{
+		//vec3 iDir = randCosineWeightedRay(normal);
+		float pdf;
+		vec3 iDir = sampleBRDF(mat, normal, u, v, ray * -1, &pdf);
+		//vec3 iDir = randCosineWeightedRay(normal);
+		
+		color f_r = BRDF(mat, normal, u, v, iDir, ray * -1);
+		color L_i = radiance(pos, iDir, bounces - 1);
+
+		float cosAngle = max(dot(iDir, normal), 0.01);
+
+		color weight = f_r * cosAngle / pdf;
+		weight.r = max(0, min(1, weight.r));
+		weight.g = max(0, min(1, weight.g));
+		weight.b = max(0, min(1, weight.b));
+		total = total + L_i.mul(weight);
+		//total = total + f_r.mul(L_i) * cosAngle / pdf;
+	}*/
+
+	//if (total.r > 100)
+		//total = color(100, 0, 100);
+	return total;
+}
+
+int main()
+{
+	RTCDevice device = rtcNewDevice(NULL);
+	//srand(time(0));
+
+	threadedRenderWindow();
+
+	scene = rtcDeviceNewScene(device, RTC_SCENE_STATIC, RTC_INTERSECT1);
+	//addCube(scene);
+	addObj(scene, "models/sponza.obj");
+	//addObj(scene, "models/teapot.obj", vec3(0.8, 0, -2), 1.0);
+	//addObj(scene, "models/lenin.obj", vec3(0.0, -0.1, -1), 1.0);
+	//addObj(scene, "models/cube.obj", vec3(0, -0.9, -2), 1.0f);
+	//addObj(scene, "models/dragon.obj", vec3(0, -0.1, 0), 3.0f);
+	//models[models.size() - 1]->mat.albedoTex = createSolidTexture(color(0.2, 0.2, 0.2));
+	//models[models.size() - 1]->mat.m = 0.02;
+	//models[models.size() - 1]->mat.Fresnel = color(0.8, 0.8, 0.8);
+
+	for (int i = 0; i < models.size(); ++i)
+	{
+		if (models[i]->mat.albedoTex == 21)
+		{
+			models[i]->mat.Fresnel = color(0.6, 0.6, 0.6);
+			models[i]->mat.m = 0.001;
+		}
+		else
+		{
+			models[i]->mat.Fresnel = color(0, 0, 0);
+			models[i]->mat.m = 1;
+		}
+	}
+
+	rtcCommit(scene);
+
+	auto start = chrono::high_resolution_clock::now();
+
+	//#pragma omp parallel for schedule(dynamic)
+	for (int i = 1; i <= NUM_SAMPLES; ++i)
+	{
+
+		cout << "sample " << i << " of " << NUM_SAMPLES << endl;
+		for (int y = 0; y < imageHeight; ++y)
+		{
+			for (int x = 0; x < imageWidth; ++x)
+			{
+				color totalColor = buffer[x][y];
+
+				float rx = 1.0f * (nrand() - 0.5f) / (imageWidth),
+				ry = 1.0f * (nrand() - 0.5f) / (imageHeight);
+				//float rx = 0, ry = 0;
+
+				float aspect = (float)imageWidth / imageHeight;
+				float fovW = 3.14159 / 4;
+				float zNear = 0.5;
+				float nearhW = tan(fovW) * zNear;
+				float nearhH = nearhW / aspect;
+
+				vec3 ray = vec3(((float)x / imageWidth - 1.0f / 2) * nearhW + rx, ((float)y / imageHeight - 1.0f / 2) * nearhH + ry, -zNear);
+
+				color sampleColor = radiance(vec3(0, 1, 5), ray.normalized(), NUM_BOUNCES);
+
+				totalColor = (totalColor * (i - 1.0f) + sampleColor) / i;
+
+				buffer[x][y] = totalColor;
+			}
+		}
+	}
+
+	for (int y = imageHeight - 1; y >= 0; --y)
+	{
+		for (int x = 0; x < imageWidth; ++x)
+		{
+			buffer[x][y] = buffer[x][y].normalized();
+		}
+	}
+
+	auto end = chrono::high_resolution_clock::now();
+
+	cout << "Elapsed time: " << chrono::duration_cast<chrono::hours>(end - start).count() << " hours" << endl;
+	cout << "Elapsed time: " << chrono::duration_cast<chrono::minutes>(end - start).count() << " minutes" << endl;
+	cout << "Elapsed time: " << chrono::duration_cast<chrono::seconds>(end - start).count() << " seconds" << endl;
+	cout << "Elapsed time: " << chrono::duration_cast<chrono::milliseconds>(end - start).count() << " milliseconds" << endl;
+	cout << "     Seconds per pixel: " << (float)chrono::duration_cast<chrono::seconds>(end - start).count() / (imageWidth*imageHeight) << endl;
+	cout << "Milliseconds per pixel: " << (float)chrono::duration_cast<chrono::milliseconds>(end - start).count() / (imageWidth*imageHeight) << endl;
+	cout << "Microseconds per pixel: " << (float)chrono::duration_cast<chrono::microseconds>(end - start).count() / (imageWidth*imageHeight) << endl;
+
+	ofstream file("image2.ppm");
+	file << "P3 " << imageWidth << " " << imageHeight << " 255" << endl;
+
+	for (int y = imageHeight - 1; y >= 0; --y)
+	{
+		for (int x = 0; x < imageWidth; ++x)
+		{
+			if ((int)(buffer[x][y].r * 255) == 0x80000000 ||
+				(int)(buffer[x][y].g * 255) == 0x80000000 ||
+				(int)(buffer[x][y].b * 255) == 0x80000000)
+			{
+				//cout << "a divide by zero happened" << endl;
+				/*for (int i = 0; i < 50; ++i)
+					file << "\n";*/
+				file << 0 << " " << 0 << " " << 0 << " ";
+			}
+			else
+				file << (int)(buffer[x][y].r * 255) << " " << (int)(buffer[x][y].g * 255) << " " << (int)(buffer[x][y].b * 255) << " ";
+		}
+	}
+
+	file.close();
+
+	//cout << maxPDF << endl;
+	/*{
+		FILE* f = fopen("out.csv", "w");
+		for (int i = 0; i < 400; ++i)
+		{
+			fprintf(f, "%d,\n", pdfs[i]);
+		}
+		fclose(f);
+	}*/
+
+	cout << "Finished" << endl;
+	cin.get();
+
+	//rtcDeleteScene(scene);
+	//rtcExit();
+
+	exitThreadedRenderWindow();
+
+	return 0;
+}
