@@ -19,11 +19,68 @@ vec3 randCosineWeightedRay(vec3 norm)
 	vec3 tangent = getTangent(norm);
 	vec3 bitangent = cross(norm, tangent);
 
-	vec3 castRay = (tangent*rx + bitangent*rz + norm*ry).normalized();
+	vec3 castRay = normalize(tangent*rx + bitangent*rz + norm*ry);
 	return castRay;
 }
 
-class material
+enum MATERIAL_LAYER_TYPE
+{
+	NONE, DIFFUSE, MICROFACET, EMMISION
+};
+class materialLayer
+{
+public:
+	MATERIAL_LAYER_TYPE type;
+
+	// top layers
+	float Fresnel;
+
+	// microfacet
+	float m;
+
+	// light source
+	color emmision;
+
+	int hueTexId;
+
+	materialLayer()
+		: Fresnel(0), m(1), emmision(color(0, 0, 0)), hueTexId(-1) {}
+};
+
+materialLayer* createDiffuseLayer(int texId)
+{
+	materialLayer* newLayer = new materialLayer();
+	newLayer->type = DIFFUSE;
+	newLayer->Fresnel = 1;
+	newLayer->hueTexId = texId;
+	return newLayer;
+}
+materialLayer* createMicrofacetLayer(float f, float m, color c = color(1, 1, 1))
+{
+	materialLayer* newLayer = new materialLayer();
+	newLayer->type = MICROFACET;
+	newLayer->Fresnel = f;
+	newLayer->m = m;
+	newLayer->hueTexId = createSolidTexture(c);
+	return newLayer;
+}
+
+class layeredMaterial
+{
+public:
+	vector<materialLayer*> layers;
+
+	void addLayerTop(materialLayer* l)
+	{
+		layers.insert(layers.begin(), l);
+	}
+	void addLayerBottom(materialLayer* l)
+	{
+		layers.push_back(l);
+	}
+};
+
+/*class material
 {
 public:
 	material()
@@ -39,14 +96,13 @@ public:
 	float m;
 	color Emmision;
 	int albedoTex;
-};
+};*/
 
+//-----------------------------------------------------------------------------
+// Microfacet functions
+//-----------------------------------------------------------------------------
 float Fresnel(vec3 l, vec3 m, float rf0)
 {
-	//float LDotM = dot(l, m);
-	//return rf0 + (1 - rf0) * pow(1 - LDotM, 5);
-	//return rf0;
-
 	float n = (1 + sqrt(rf0)) / max(1 - sqrt(rf0), 0.001);
 	float c = dot(l, m);
 	float g_temp = n * n - 1 + c * c;
@@ -77,8 +133,6 @@ float BeckmanD(vec3 m, vec3 norm, float alpha)
 	if (denom < 0.001)
 		denom = 0.001;
 	float total = positivity * max(0.001, exp(coef)) / (PI * denom);
-	if (total > 500)
-		printf("asdfasdfe");
 	return total;
 }
 float SmithG1Approx(vec3 v, vec3 m, vec3 norm, float alpha)
@@ -101,18 +155,17 @@ float SmithG1Approx(vec3 v, vec3 m, vec3 norm, float alpha)
 	}
 }
 
-vec3 sampleMicrofacet(material mat, vec3 norm, float u, float v, vec3 iDir, float* pdf)
+//-----------------------------------------------------------------------------
+// Importance Sampling Functions
+//-----------------------------------------------------------------------------
+vec3 importanceSampleHalfVectorDiffuse(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir)
 {
-	float roughness = mat.m;
-	float alpha = roughness;
-	//float alpha_t = (1.2 - 0.2 * sqrt(dot(iDir, norm))) * roughness;
-	//float alpha_t = 1.2 * roughness;
-	float alpha_t = alpha;
-	if (alpha_t != alpha_t ||
-		alpha_t < 0.001)
-	{
-		printf("%f\n", (double)dot(iDir, norm));
-	}
+	vec3 iDir = randCosineWeightedRay(norm);
+	return normalize(oDir + iDir);
+}
+vec3 importanceSampleHalfVectorMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir)
+{
+	float alpha_t = ml->m;
 
 	float d1 = nrand();
 	float d2 = nrand();
@@ -126,98 +179,53 @@ vec3 sampleMicrofacet(material mat, vec3 norm, float u, float v, vec3 iDir, floa
 
 	vec3 tangent = getTangent(norm);
 	vec3 bitangent = cross(norm, tangent);
-	vec3 m = (tangent * mX + norm * mY + bitangent * mZ).normalized();
+	vec3 m = normalize(tangent * mX + norm * mY + bitangent * mZ);
 
-	float NDotM = dot(norm, m);
-	float IDotM = dot(iDir, m);
-
-	float pdf_m = BeckmanD(m, norm, alpha_t) * NDotM;
-
-	vec3 oDir = m * IDotM * 2.0f - iDir;
-	float ODotH = dot(oDir, m);
-	if (ODotH < 0.001)
-		ODotH = 0.001;
-
-	float  pdf_o = pdf_m / (4 * ODotH);
-	*pdf = max(pdf_o, 0.01);
-
-	if (pdf_o < 0)
-		printf("asfdassdf");
-	if (IDotM < 0)
-		*pdf = 123456;
-	if (dot(oDir, norm) < 0)
-		*pdf = 123456;
-
-	return oDir;
+	return m;
+}
+vec3 importanceSampleHalfVector(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir)
+{
+	if (ml->type == DIFFUSE)
+		return importanceSampleHalfVectorDiffuse(ml, norm, u, v, oDir);
+	if (ml->type == MICROFACET)
+		return importanceSampleHalfVectorMicrofacet(ml, norm, u, v, oDir);
+	return norm;
 }
 
-/*vec3 sampleBRDF(material mat, vec3 norm, float u, float v, vec3 iDir, float* pdf)
+float probabilityDensityDiffuse(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
 {
-	float roughness = mat.m;
-	float alpha = roughness;
-	float alpha_t = (1.2 - 0.2 * sqrt(dot(iDir, norm))) * roughness;
-	//float alpha_t = 1.2 * roughness;
-	//float alpha_t = alpha;
-	if (alpha_t != alpha_t ||
-		alpha_t < 0.001)
-	{
-		printf("%f\n", (double)dot(iDir, norm));
-	}
+	float cosAngle = dot(iDir, norm);
+	return cosAngle / PI;
+}
+float probabilityDensityMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
+{
+	float alpha = ml->m;
 	
-	float d1 = nrand();
-	float d2 = nrand();
-	float d3 = nrand();
+	float pdf = BeckmanD(half, norm, alpha) * dot(half, norm);
+	pdf /= 4 * dot(iDir, half);
+	return pdf;
+}
+float probabilityDensity(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
+{
+	if (ml->type == DIFFUSE)
+		return probabilityDensityDiffuse(ml, norm, u, v, oDir, half, iDir);
+	if (ml->type == MICROFACET)
+		return probabilityDensityMicrofacet(ml, norm, u, v, oDir, half, iDir);
+	return 1;
+}
 
-	float theta_m = atan(sqrt(-alpha_t * alpha_t * log(1 - d1)));
-	float phi_m = 2 * PI * d2;
+//--
 
-	float mY = cos(theta_m);
-	float mX = cos(phi_m) * sin(theta_m);
-	float mZ = sin(phi_m) * sin(theta_m);
-
-	vec3 tangent = getTangent(norm);
-	vec3 bitangent = cross(norm, tangent);
-	vec3 m = (tangent * mX + norm * mY + bitangent * mZ).normalized();
-
-	float NDotM = dot(norm, m);
-	float IDotM = dot(iDir, m);
-
-	float fWeight = Fresnel(iDir, m, mat.Fresnel.r);
-	if (d3 > fWeight)
-	{
-		fallback:
-		vec3 oDir = randCosineWeightedRay(norm);
-		float cos_theta = max(dot(oDir, norm), 0.01);
-		*pdf = cos_theta / PI;
-		return oDir;
-	}
-
-	if (IDotM < 0)
-		goto fallback; // i really dont know what to do here, but this is definately a possibility
-
-	float pdf_m = BeckmanD(m, norm, alpha_t) * NDotM;
-
-	vec3 oDir = m * IDotM * 2.0f - iDir;
-	float ODotH = dot(oDir, m);
-	if (ODotH < 0.001)
-		ODotH = 0.001;
-
-	if (dot(oDir, norm) < 0)
-		goto fallback;
-
-	float  pdf_o = pdf_m / (4 * ODotH);
-	//pdf_o *= fWeight;
-	*pdf = max(pdf_o, 0.01);
-	if (pdf_o < 0)
-		printf("asfdassdf");
-	return oDir;
-}*/
-
-color microfacetBRDF(material mat, vec3 norm, float u, float v, vec3 iDir, vec3 oDir)
+//
+color BRDFDiffuse(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
+{
+	return fetch(ml->hueTexId, u, v) / PI;
+}
+color BRDFMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
 {
 	vec3 lDir = iDir;
 	vec3 vDir = oDir;
-	vec3 hDir = (lDir + vDir).normalized();
+	vec3 hDir = normalize(lDir + vDir);
 
 	float LDotH = max(0, dot(lDir, hDir));
 	float NDotH = max(0, dot(norm, hDir));
@@ -225,10 +233,10 @@ color microfacetBRDF(material mat, vec3 norm, float u, float v, vec3 iDir, vec3 
 	float LDotN = dot(lDir, norm);
 	float ODotN = dot(oDir, norm);
 
-	float roughness = mat.m;
+	float roughness = ml->m;
 	float alpha = roughness;
 
-	color rf_o = mat.Fresnel;
+	//color rf_o = mat.Fresnel;
 	color FresnelTerm = color(1, 1, 1);// *Fresnel(iDir, hDir, rf_o.r);
 
 	float DistributionTerm = BeckmanD(hDir, norm, alpha);
@@ -243,56 +251,101 @@ color microfacetBRDF(material mat, vec3 norm, float u, float v, vec3 iDir, vec3 
 	{
 		printf("asdfasfda");
 	}
-	if (f_microfacet.r < 0 || 1 < f_microfacet.r)
-	{
-		//printf("Energy conservation is being violated\n");
-	}
 
 	return f_microfacet;
 }
-
-color lambertBRDF(material mat, vec3 norm, float u, float v, vec3 iDir, vec3 oDir)
+color BRDF(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
 {
-	color diff = fetch(mat.albedoTex, u, v) / PI;
-	return diff;
+	if (ml->type == DIFFUSE)
+		return BRDFDiffuse(ml, norm, u, v, oDir, iDir);
+	if (ml->type == MICROFACET)
+		return BRDFMicrofacet(ml, norm, u, v, oDir, iDir);
+	return color(1, 0, 1);
 }
 
-/*color BRDF(material mat, vec3 norm, float u, float v, vec3 iDir, vec3 oDir)
+vec3 sampleMicrofacet(materialLayer mat, vec3 norm, float u, float v, vec3 iDir, float* pdf)
+{
+	float roughness = mat.m;
+	float alpha = roughness;
+	//float alpha_t = (1.2 - 0.2 * sqrt(dot(iDir, norm))) * roughness;
+	//float alpha_t = 1.2 * roughness;
+	float alpha_t = alpha;
+
+	float d1 = nrand();
+	float d2 = nrand();
+
+	float theta_m = atan(sqrt(-alpha_t * alpha_t * log(1 - d1)));
+	float phi_m = 2 * PI * d2;
+
+	float mY = cos(theta_m);
+	float mX = cos(phi_m) * sin(theta_m);
+	float mZ = sin(phi_m) * sin(theta_m);
+
+	vec3 tangent = getTangent(norm);
+	vec3 bitangent = cross(norm, tangent);
+	vec3 m = normalize(tangent * mX + norm * mY + bitangent * mZ);
+
+	float NDotM = dot(norm, m);
+	float IDotM = dot(iDir, m);
+
+	float pdf_m = BeckmanD(m, norm, alpha_t) * NDotM;
+
+	vec3 oDir = m * IDotM * 2.0f - iDir;
+	float ODotH = dot(oDir, m);
+	if (ODotH < 0.001)
+		ODotH = 0.001;
+
+	float  pdf_o = pdf_m / (4 * ODotH);
+	*pdf = max(pdf_o, 0.01);
+
+	if (pdf_o < 0)
+		printf("asfdassdf");
+	if (IDotM < 0)
+		*pdf = 123456;
+	if (dot(oDir, norm) < 0)
+		*pdf = 123456;
+
+	return oDir;
+}
+
+color microfacetBRDF(materialLayer mat, vec3 norm, float u, float v, vec3 iDir, vec3 oDir)
 {
 	vec3 lDir = iDir;
 	vec3 vDir = oDir;
-	vec3 hDir = (lDir + vDir).normalized();
+	vec3 hDir = normalize(lDir + vDir);
 
 	float LDotH = max(0, dot(lDir, hDir));
 	float NDotH = max(0, dot(norm, hDir));
 
 	float LDotN = dot(lDir, norm);
-	float ODorN = dot(oDir, norm);
+	float ODotN = dot(oDir, norm);
 
 	float roughness = mat.m;
 	float alpha = roughness;
 
-	color rf_o = mat.Fresnel;
-	//color FresnelTerm = rf_o + (color(1, 1, 1) - rf_o) * pow(1 - LDotH, 5);
-	//color FresnelTerm = rf_o;
-	color FresnelTerm = color(1, 1, 1) * Fresnel(iDir, hDir, rf_o.r);
-	//color FresnelTerm = color(1, 1, 1);
+	//color rf_o = mat.Fresnel;
+	color FresnelTerm = color(1, 1, 1);// *Fresnel(iDir, hDir, rf_o.r);
 
 	float DistributionTerm = BeckmanD(hDir, norm, alpha);
 
 	float GeometryTerm = SmithG1Approx(iDir, hDir, norm, alpha) * SmithG1Approx(oDir, hDir, norm, alpha);
 
-	float denom = 4 * LDotN * ODorN;
+	float denom = 4 * LDotN * ODotN;
 
 	color f_microfacet = FresnelTerm * GeometryTerm * DistributionTerm / denom;
 
-	color diffuse = fetch(mat.albedoTex, u, v) / 3.14159;
-	color spec = f_microfacet;
-	color total = diffuse.mul(color(1, 1, 1) - FresnelTerm) + spec;
+	if (f_microfacet.r != f_microfacet.r)
+	{
+		printf("asdfasfda");
+	}
 
-	//if (total.r > 500)
-		//printf("asdfsaf");
+	return f_microfacet;
+}
 
-	return total;
-}*/
+color lambertBRDF(materialLayer mat, vec3 norm, float u, float v, vec3 iDir, vec3 oDir)
+{
+	color diff = fetch(mat.hueTexId, u, v) / PI;
+	return diff;
+}
+
 

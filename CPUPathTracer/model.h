@@ -35,7 +35,7 @@ struct model
 	unsigned int geom_id;
 	vector<unsigned int> indices;
 	vector<float> uv;
-	material mat;
+	layeredMaterial mat;
 };
 vector<model*> models;
 vector<model*> lights;
@@ -110,16 +110,23 @@ void addObj(RTCScene& scene, string filename, vec3 origin = vec3(), float scale 
 			}
 		}
 
+		materialLayer* ml;
+		//if (e0 == 0 && e1 == 0 && e2 == 0)
+		{
+			ml = createDiffuseLayer(tId);
+		}
+
 		// create model
 		model* m = new model();
 		m->geom_id = mesh;
 		printf("%d\n", mesh);
 		m->indices = shapes[i].mesh.indices;
 		m->uv = shapes[i].mesh.texcoords;
-		m->mat = material();
+		/*m->mat = material();
 		m->mat.Albedo = color(a0, a1, a2);
 		m->mat.Emmision = color(e0, e1, e2) * 1;
-		m->mat.albedoTex = tId;
+		m->mat.albedoTex = tId;*/
+		m->mat.addLayerBottom(ml);
 		models.push_back(m);
 	}
 }

@@ -15,11 +15,14 @@ using namespace std;
 using std::cout;
 using std::cin;
 
+#include <glm\glm.hpp>
+using glm::vec3;
+using namespace glm;
+
 #include "triangle.h"
 #include "color.h"
 #include "material.h"
 #include "model.h"
-#include "shape.h"
 #include "useful.h"
 #include "vec3.h"
 
@@ -51,19 +54,19 @@ vec3 randRayInSphere() {
 			continue;
 		break;
 	}
-	return vec3(rx, ry, rz).normalized();
+	return normalize(vec3(rx, ry, rz));
 }
 
 vec3 randHemisphereRay(vec3 norm)
 {
 	vec3 castRay = randRayInSphere();
 	if (dot(castRay, norm) < 0)
-		castRay = castRay * -1;
-	return castRay.normalized();
+		castRay = -castRay;
+	return normalize(castRay);
 }
 
-vector<shape*> shapes;
-vector<triangle> tris;
+//vector<shape*> shapes;
+//vector<triangle> tris;
 
 RTCScene scene;
 
@@ -86,11 +89,9 @@ float roundDown(float x)
 	return ret;
 }
 
-int pdfs[400] = { 0 };
-int maxPDF = 0;
 color radiance(vec3 o, vec3 ray, float bounces)
 {
-	vec3 oDir = ray * -1;
+	vec3 oDir = -ray;
 	
 	RTCRay rtcNegODir = makeRay(o, ray);
 	rtcIntersect(scene, rtcNegODir);
@@ -99,14 +100,6 @@ color radiance(vec3 o, vec3 ray, float bounces)
 		return SKY_ILLUMINATION;
 	}
 
-	/*model* curModel = 0;
-	for (int m = 0; m < models.size(); ++m)
-	{
-		if (models[m]->geom_id == rtcNegODir.geomID)
-			curModel = models[m];
-	}
-	if (curModel == 0)
-		return color(1, 0, 0); // unknown material*/
 	model* curModel = models[rtcNegODir.geomID];
 
 	float u = 1, v = 1;
@@ -115,8 +108,6 @@ color radiance(vec3 o, vec3 ray, float bounces)
 		int primId = rtcNegODir.primID;
 		float u0, u1, u2;
 		float v0, v1, v2;
-
-		//printf("%d, %d, %d\n", 3 * primId + 0, curModel->indices.size(), curModel->uv.size());
 
 		u0 = curModel->uv[2 * curModel->indices[3 * primId + 0]];
 		u1 = curModel->uv[2 * curModel->indices[3 * primId + 1]];
@@ -130,8 +121,6 @@ color radiance(vec3 o, vec3 ray, float bounces)
 		v = rtcNegODir.u * v1 + rtcNegODir.v * v2 + (1 - rtcNegODir.u - rtcNegODir.v) * v0;
 		u = u - roundDown(u);
 		v = v - roundDown(v);
-		//u = u1 - roundDown(u1);
-		//v = v1 - roundDown(v1);
 	}
 
 	float t = rtcNegODir.tfar;
@@ -140,14 +129,14 @@ color radiance(vec3 o, vec3 ray, float bounces)
 		return color(0, 0, 0);
 
 	vec3 pos = o + ray * t;
-	vec3 normal = vec3(-rtcNegODir.Ng[0], -rtcNegODir.Ng[1], -rtcNegODir.Ng[2]).normalized();
-	if (dot(normal, ray * -1) < 0)
-		normal = normal * -1;
+	vec3 normal = normalize(vec3(-rtcNegODir.Ng[0], -rtcNegODir.Ng[1], -rtcNegODir.Ng[2]));
+	if (dot(normal, ray * -1.0f) < 0)
+		normal = normal * -1.0f;
 
-	material mat = curModel->mat;
+	layeredMaterial mat = curModel->mat;
 
 	color total = color();
-	total = total + mat.Emmision;
+	//total = total + mat.Emmision;
 
 	if (bounces == 0)
 		return total;
@@ -184,8 +173,7 @@ color radiance(vec3 o, vec3 ray, float bounces)
 	}*/
 
 	float d1 = nrand();
-	//if (d1 < mat.Fresnel.r)
-	{
+	/*{
 		float pdf;
 		vec3 iDir = sampleMicrofacet(mat, normal, u, v, ray * -1, &pdf);
 		vec3 h = (oDir + iDir).normalized();
@@ -214,30 +202,30 @@ color radiance(vec3 o, vec3 ray, float bounces)
 
 			total = f_r.mul(L_i) * cosAngle / pdf;
 		}
-	}
-
-	// diffuse sampling
-	/*{
-		//vec3 iDir = randCosineWeightedRay(normal);
-		float pdf;
-		vec3 iDir = sampleBRDF(mat, normal, u, v, ray * -1, &pdf);
-		//vec3 iDir = randCosineWeightedRay(normal);
-		
-		color f_r = BRDF(mat, normal, u, v, iDir, ray * -1);
-		color L_i = radiance(pos, iDir, bounces - 1);
-
-		float cosAngle = max(dot(iDir, normal), 0.01);
-
-		color weight = f_r * cosAngle / pdf;
-		weight.r = max(0, min(1, weight.r));
-		weight.g = max(0, min(1, weight.g));
-		weight.b = max(0, min(1, weight.b));
-		total = total + L_i.mul(weight);
-		//total = total + f_r.mul(L_i) * cosAngle / pdf;
 	}*/
 
-	//if (total.r > 100)
-		//total = color(100, 0, 100);
+	for (int i = 0; i < mat.layers.size(); ++i)
+	{
+		vec3 half = importanceSampleHalfVector(mat.layers[i], normal, u, v, oDir);
+
+		float f = Fresnel(oDir, half, mat.layers[i]->Fresnel);
+		if (d1 > f)
+		{
+			d1 -= f;
+			continue;
+		}
+
+		vec3 iDir = half * dot(oDir, half) * 2.0f - oDir;
+		float pdf = probabilityDensity(mat.layers[i], normal, u, v, oDir, half, iDir);
+
+		color f_r = BRDF(mat.layers[i], normal, u, v, oDir, iDir);
+		color L_i = radiance(pos, iDir, bounces - 1);
+		float cosAngle = max(dot(iDir, normal), 0.01);
+
+		total = f_r.mul(L_i) * cosAngle / pdf;
+		break;
+	}
+
 	return total;
 }
 
@@ -249,28 +237,29 @@ int main()
 	threadedRenderWindow();
 
 	scene = rtcDeviceNewScene(device, RTC_SCENE_STATIC, RTC_INTERSECT1);
-	//addCube(scene);
 	addObj(scene, "models/sponza.obj");
 	//addObj(scene, "models/teapot.obj", vec3(0.8, 0, -2), 1.0);
 	//addObj(scene, "models/lenin.obj", vec3(0.0, -0.1, -1), 1.0);
 	//addObj(scene, "models/cube.obj", vec3(0, -0.9, -2), 1.0f);
-	//addObj(scene, "models/dragon.obj", vec3(0, -0.1, 0), 3.0f);
+	addObj(scene, "models/dragon_simple.obj", vec3(0, 0, 0), 3.0f);
 	//models[models.size() - 1]->mat.albedoTex = createSolidTexture(color(0.2, 0.2, 0.2));
 	//models[models.size() - 1]->mat.m = 0.02;
 	//models[models.size() - 1]->mat.Fresnel = color(0.8, 0.8, 0.8);
 
 	for (int i = 0; i < models.size(); ++i)
 	{
-		if (models[i]->mat.albedoTex == 21)
+		if (models[i]->mat.layers[0]->hueTexId == 21)
 		{
-			models[i]->mat.Fresnel = color(0.6, 0.6, 0.6);
-			models[i]->mat.m = 0.001;
+			//models[i]->mat.Fresnel = color(0.6, 0.6, 0.6);
+			//models[i]->mat.m = 0.001;
+			models[i]->mat.addLayerTop(createMicrofacetLayer(0.6, 0.001));
+			printf("%d\n", i);
 		}
-		else
+		/*else
 		{
 			models[i]->mat.Fresnel = color(0, 0, 0);
 			models[i]->mat.m = 1;
-		}
+		}*/
 	}
 
 	rtcCommit(scene);
@@ -300,7 +289,7 @@ int main()
 
 				vec3 ray = vec3(((float)x / imageWidth - 1.0f / 2) * nearhW + rx, ((float)y / imageHeight - 1.0f / 2) * nearhH + ry, -zNear);
 
-				color sampleColor = radiance(vec3(0, 1, 5), ray.normalized(), NUM_BOUNCES);
+				color sampleColor = radiance(vec3(0, 1, 5), normalize(ray), NUM_BOUNCES);
 
 				totalColor = (totalColor * (i - 1.0f) + sampleColor) / i;
 
@@ -349,16 +338,6 @@ int main()
 	}
 
 	file.close();
-
-	//cout << maxPDF << endl;
-	/*{
-		FILE* f = fopen("out.csv", "w");
-		for (int i = 0; i < 400; ++i)
-		{
-			fprintf(f, "%d,\n", pdfs[i]);
-		}
-		fclose(f);
-	}*/
 
 	cout << "Finished" << endl;
 	cin.get();

@@ -73,7 +73,7 @@ struct color
 	color fromVec3(vec3 other)
 	{
 		color ret;
-		other = other.normalized();
+		other = normalize(other);
 		//ret.r = (other.x + 1) / 2;
 		//ret.g = (other.y + 1) / 2;
 		ret.b = (other.z + 1) / 2;

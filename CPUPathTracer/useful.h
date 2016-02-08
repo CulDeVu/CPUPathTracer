@@ -44,7 +44,7 @@ vec3 getTangent(vec3 norm)
 	vec3 tangent;
 	vec3 c1 = cross(norm, vec3(0, 0, 1));
 	vec3 c2 = cross(norm, vec3(0, 1, 0));
-	if (c1.lengthsqr() > c2.lengthsqr())
+	if (dot(c1, c1) > dot(c2, c2))
 		tangent = c1;
 	else
 		tangent = c2;
@@ -56,7 +56,7 @@ vec3 normalSpaceToWorldSpace(vec3 in, vec3 norm)
 	vec3 tangent = getTangent(norm);
 	vec3 bitangent = cross(norm, tangent);
 
-	vec3 castRay = (tangent*in.x + bitangent*in.z + norm*in.y).normalized();
+	vec3 castRay = normalize(tangent*in.x + bitangent*in.z + norm*in.y);
 	return castRay;
 }
 vec3 worldSpaceToNormalSpace(vec3 in, vec3 norm)
