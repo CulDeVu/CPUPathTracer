@@ -31,13 +31,14 @@ using namespace glm;
 
 const int imageWidth = 500,
 		  imageHeight = 500;
-const int NUM_SAMPLES = 500,
-		  NUM_BOUNCES = 3;
+const int NUM_SAMPLES = 10,
+		  NUM_BOUNCES = 2;
 
 const color SKY_ILLUMINATION = color(12, 12, 12); // color(17, 12, 4);
 
 color buffer[imageWidth][imageHeight];
 #include "GLRender.h"
+//#include "fastBilateral.h"
 
 #pragma comment(lib, "embree.lib")
 
@@ -102,6 +103,7 @@ color radiance(vec3 o, vec3 ray, float bounces)
 
 	model* curModel = models[rtcNegODir.geomID];
 
+	// calculate the UV coords
 	float u = 1, v = 1;
 	if (curModel->uv.size() != 0)
 	{
@@ -173,37 +175,6 @@ color radiance(vec3 o, vec3 ray, float bounces)
 	}*/
 
 	float d1 = nrand();
-	/*{
-		float pdf;
-		vec3 iDir = sampleMicrofacet(mat, normal, u, v, ray * -1, &pdf);
-		vec3 h = (oDir + iDir).normalized();
-
-		float f = Fresnel(iDir, h, mat.Fresnel.r);
-		if (d1 > f || pdf == 123456)
-		{
-			vec3 iDir = randCosineWeightedRay(normal);
-
-			float cosAngle = max(dot(iDir, normal), 0.01);
-			float pdf = cosAngle / PI;
-
-			color f_r = lambertBRDF(mat, normal, u, v, iDir, ray * -1);
-			color L_i = radiance(pos, iDir, bounces - 1);
-			color weight = f_r * cosAngle / pdf;
-
-			total = f_r.mul(L_i) * cosAngle / pdf;
-		}
-		else
-		{
-			float cosAngle = max(dot(iDir, normal), 0.01);
-			
-			color f_r = microfacetBRDF(mat, normal, u, v, iDir, ray * -1);
-			color L_i = radiance(pos, iDir, bounces - 1);
-			color weight = f_r * cosAngle / pdf;
-
-			total = f_r.mul(L_i) * cosAngle / pdf;
-		}
-	}*/
-
 	for (int i = 0; i < mat.layers.size(); ++i)
 	{
 		vec3 half = importanceSampleHalfVector(mat.layers[i], normal, u, v, oDir);
@@ -216,23 +187,82 @@ color radiance(vec3 o, vec3 ray, float bounces)
 		}
 
 		vec3 iDir = half * dot(oDir, half) * 2.0f - oDir;
-		float pdf = probabilityDensity(mat.layers[i], normal, u, v, oDir, half, iDir);
+		/*float pdf = probabilityDensity(mat.layers[i], normal, u, v, oDir, half, iDir);
 
 		color f_r = BRDF(mat.layers[i], normal, u, v, oDir, iDir);
 		color L_i = radiance(pos, iDir, bounces - 1);
 		float cosAngle = max(dot(iDir, normal), 0.01);
 
-		total = f_r.mul(L_i) * cosAngle / pdf;
+		total = f_r.mul(L_i) * cosAngle / pdf;*/
+
+		color L_i = radiance(pos, iDir, bounces - 1);
+		color weight = sampleWeight(mat.layers[i], normal, u, v, oDir, half, iDir);
+
+		total = L_i.mul(weight);
+
 		break;
 	}
 
 	return total;
 }
 
+void denoise()
+{
+	// DOES NOT WORK AT ALL
+	// TODO: THIS
+	
+	int neighborhoodHW = 0;
+	
+	float std_pos = (neighborhoodHW + 1) / 2.f;
+	float std_color = 2.f / NUM_SAMPLES;
+
+	color* buffer_copy = new color[imageWidth * imageHeight];
+	memcpy(buffer_copy, buffer, imageWidth * imageHeight * sizeof(color));
+
+	for (int x = neighborhoodHW; x < imageWidth - neighborhoodHW; ++x)
+	{
+		for (int y = neighborhoodHW; y < imageHeight - neighborhoodHW; ++y)
+		{
+			int minX = min(x - neighborhoodHW, 0);
+			int maxX = max(x + neighborhoodHW + 1, imageWidth);
+			int minY = min(y - neighborhoodHW, 0);
+			int maxY = max(y + neighborhoodHW + 1, imageHeight);
+
+			color numSum = color();
+			float denomSum = 0;
+
+			float I_x_y = buffer_copy[x * imageHeight + y].greyscale();
+			
+			for (int k = minX; k < maxX; ++k)
+			{
+				for (int l = minY; l < maxY; ++l)
+				{
+					//float I_k_l_grey = buffer_copy[k * imageHeight + l].greyscale();
+					color I_k_l = buffer_copy[k * imageHeight + l];
+					
+					/*float exponent = -(
+						((x - k)*(x - k) + (y - l)*(y - l)) / (2 * std_pos) +
+						((I_x_y - I_k_l_grey) * (I_x_y - I_k_l_grey)) / (2 * std_color)
+						);
+					float w = exp(exponent);*/
+
+					//numSum = numSum + I_k_l * w;
+					//denomSum += w;
+					//numSum = numSum + I_k_l;
+					numSum = color(1, 1, 1);
+					denomSum = 1;
+				}
+			}
+
+			color g = numSum / denomSum;
+			buffer[x][y] = g;
+		}
+	}
+}
+
 int main()
 {
 	RTCDevice device = rtcNewDevice(NULL);
-	//srand(time(0));
 
 	threadedRenderWindow();
 
@@ -241,7 +271,7 @@ int main()
 	//addObj(scene, "models/teapot.obj", vec3(0.8, 0, -2), 1.0);
 	//addObj(scene, "models/lenin.obj", vec3(0.0, -0.1, -1), 1.0);
 	//addObj(scene, "models/cube.obj", vec3(0, -0.9, -2), 1.0f);
-	addObj(scene, "models/dragon_simple.obj", vec3(0, 0, 0), 3.0f);
+	//addObj(scene, "models/dragon_simple.obj", vec3(0, 0, 0), 3.0f);
 	//models[models.size() - 1]->mat.albedoTex = createSolidTexture(color(0.2, 0.2, 0.2));
 	//models[models.size() - 1]->mat.m = 0.02;
 	//models[models.size() - 1]->mat.Fresnel = color(0.8, 0.8, 0.8);
@@ -253,7 +283,7 @@ int main()
 			//models[i]->mat.Fresnel = color(0.6, 0.6, 0.6);
 			//models[i]->mat.m = 0.001;
 			models[i]->mat.addLayerTop(createMicrofacetLayer(0.6, 0.001));
-			printf("%d\n", i);
+			//printf("%d\n", i);
 		}
 		/*else
 		{
@@ -315,6 +345,8 @@ int main()
 	cout << "     Seconds per pixel: " << (float)chrono::duration_cast<chrono::seconds>(end - start).count() / (imageWidth*imageHeight) << endl;
 	cout << "Milliseconds per pixel: " << (float)chrono::duration_cast<chrono::milliseconds>(end - start).count() / (imageWidth*imageHeight) << endl;
 	cout << "Microseconds per pixel: " << (float)chrono::duration_cast<chrono::microseconds>(end - start).count() / (imageWidth*imageHeight) << endl;
+
+	//denoise();
 
 	ofstream file("image2.ppm");
 	file << "P3 " << imageWidth << " " << imageHeight << " 255" << endl;

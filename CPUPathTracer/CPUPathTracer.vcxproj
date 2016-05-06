@@ -69,6 +69,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="color.h" />
+    <ClInclude Include="fastBilateral.h" />
     <ClInclude Include="GLRender.h" />
     <ClInclude Include="material.h" />
     <ClInclude Include="model.h" />
