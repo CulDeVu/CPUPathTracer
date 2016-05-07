@@ -31,10 +31,10 @@ using namespace glm;
 
 const int imageWidth = 500,
 		  imageHeight = 500;
-const int NUM_SAMPLES = 10,
-		  NUM_BOUNCES = 2;
+const int NUM_SAMPLES = 50,
+		  NUM_BOUNCES = 3;
 
-const color SKY_ILLUMINATION = color(12, 12, 12); // color(17, 12, 4);
+const color SKY_ILLUMINATION = SKY_BLACK;
 
 color buffer[imageWidth][imageHeight];
 #include "GLRender.h"
@@ -66,9 +66,6 @@ vec3 randHemisphereRay(vec3 norm)
 	return normalize(castRay);
 }
 
-//vector<shape*> shapes;
-//vector<triangle> tris;
-
 RTCScene scene;
 
 RTCRay makeRay(vec3 o, vec3 dir)
@@ -89,7 +86,6 @@ float roundDown(float x)
 		--ret;
 	return ret;
 }
-
 color radiance(vec3 o, vec3 ray, float bounces)
 {
 	vec3 oDir = -ray;
@@ -138,42 +134,15 @@ color radiance(vec3 o, vec3 ray, float bounces)
 	layeredMaterial mat = curModel->mat;
 
 	color total = color();
-	//total = total + mat.Emmision;
+
+	// simulates black body lights
+	if (mat.layers[0]->type == EMMISION)
+		return mat.layers[0]->getHue(0, 0);
 
 	if (bounces == 0)
 		return total;
 
-	// sphere sampling
-	/*{
-		float invPDF = 1;
-
-		vec3 d = vec3(0.0, 3, 1) - pos;
-		float rad = 1;
-		float dLen = d.length();
-		if (dLen <= 0.01f)
-			dLen = 0.01f;
-
-		float cos_maxangle;
-		if (1 - rad*rad / (dLen*dLen) <= 0)
-			cos_maxangle = 0.0f;
-		else
-			cos_maxangle = sqrt(1 - rad*rad / (dLen*dLen));
-		//float cos_maxangle = cos(asin(rad*rad / (dLen*dLen)));
-
-		vec3 castRay = d.normalized();
-
-		invPDF = (2 * 3.14159 * (1 - cos_maxangle));
-
-		float cosAngle = dot(castRay.normalized(), normal);
-		if (cosAngle < 0)
-			cosAngle = 0;
-
-		color f_r = BRDF(mat, normal, castRay, ray * -1);
-		color L_i = radiance(pos, castRay, 0);
-
-		total = total + f_r.mul(L_i) * cosAngle * invPDF / 2;
-	}*/
-
+	// microfacet importance sampling
 	float d1 = nrand();
 	for (int i = 0; i < mat.layers.size(); ++i)
 	{
@@ -187,13 +156,6 @@ color radiance(vec3 o, vec3 ray, float bounces)
 		}
 
 		vec3 iDir = half * dot(oDir, half) * 2.0f - oDir;
-		/*float pdf = probabilityDensity(mat.layers[i], normal, u, v, oDir, half, iDir);
-
-		color f_r = BRDF(mat.layers[i], normal, u, v, oDir, iDir);
-		color L_i = radiance(pos, iDir, bounces - 1);
-		float cosAngle = max(dot(iDir, normal), 0.01);
-
-		total = f_r.mul(L_i) * cosAngle / pdf;*/
 
 		color L_i = radiance(pos, iDir, bounces - 1);
 		color weight = sampleWeight(mat.layers[i], normal, u, v, oDir, half, iDir);
@@ -206,60 +168,6 @@ color radiance(vec3 o, vec3 ray, float bounces)
 	return total;
 }
 
-void denoise()
-{
-	// DOES NOT WORK AT ALL
-	// TODO: THIS
-	
-	int neighborhoodHW = 0;
-	
-	float std_pos = (neighborhoodHW + 1) / 2.f;
-	float std_color = 2.f / NUM_SAMPLES;
-
-	color* buffer_copy = new color[imageWidth * imageHeight];
-	memcpy(buffer_copy, buffer, imageWidth * imageHeight * sizeof(color));
-
-	for (int x = neighborhoodHW; x < imageWidth - neighborhoodHW; ++x)
-	{
-		for (int y = neighborhoodHW; y < imageHeight - neighborhoodHW; ++y)
-		{
-			int minX = min(x - neighborhoodHW, 0);
-			int maxX = max(x + neighborhoodHW + 1, imageWidth);
-			int minY = min(y - neighborhoodHW, 0);
-			int maxY = max(y + neighborhoodHW + 1, imageHeight);
-
-			color numSum = color();
-			float denomSum = 0;
-
-			float I_x_y = buffer_copy[x * imageHeight + y].greyscale();
-			
-			for (int k = minX; k < maxX; ++k)
-			{
-				for (int l = minY; l < maxY; ++l)
-				{
-					//float I_k_l_grey = buffer_copy[k * imageHeight + l].greyscale();
-					color I_k_l = buffer_copy[k * imageHeight + l];
-					
-					/*float exponent = -(
-						((x - k)*(x - k) + (y - l)*(y - l)) / (2 * std_pos) +
-						((I_x_y - I_k_l_grey) * (I_x_y - I_k_l_grey)) / (2 * std_color)
-						);
-					float w = exp(exponent);*/
-
-					//numSum = numSum + I_k_l * w;
-					//denomSum += w;
-					//numSum = numSum + I_k_l;
-					numSum = color(1, 1, 1);
-					denomSum = 1;
-				}
-			}
-
-			color g = numSum / denomSum;
-			buffer[x][y] = g;
-		}
-	}
-}
-
 int main()
 {
 	RTCDevice device = rtcNewDevice(NULL);
@@ -267,16 +175,19 @@ int main()
 	threadedRenderWindow();
 
 	scene = rtcDeviceNewScene(device, RTC_SCENE_STATIC, RTC_INTERSECT1);
-	addObj(scene, "models/sponza.obj");
+	//addObj(scene, "models/sponza.obj");
 	//addObj(scene, "models/teapot.obj", vec3(0.8, 0, -2), 1.0);
 	//addObj(scene, "models/lenin.obj", vec3(0.0, -0.1, -1), 1.0);
 	//addObj(scene, "models/cube.obj", vec3(0, -0.9, -2), 1.0f);
 	//addObj(scene, "models/dragon_simple.obj", vec3(0, 0, 0), 3.0f);
+	addObj(scene, "models/CornellBox-Original.obj", vec3(0, 0, 2));
 	//models[models.size() - 1]->mat.albedoTex = createSolidTexture(color(0.2, 0.2, 0.2));
 	//models[models.size() - 1]->mat.m = 0.02;
 	//models[models.size() - 1]->mat.Fresnel = color(0.8, 0.8, 0.8);
 
-	for (int i = 0; i < models.size(); ++i)
+	//models[models.size() - 1]->mat.addLayerTop(createEmmisionLayer(color(17, 12, 4)));
+
+	/*for (int i = 0; i < models.size(); ++i)
 	{
 		if (models[i]->mat.layers[0]->hueTexId == 21)
 		{
@@ -289,8 +200,8 @@ int main()
 		{
 			models[i]->mat.Fresnel = color(0, 0, 0);
 			models[i]->mat.m = 1;
-		}*/
-	}
+		}*
+	}*/
 
 	rtcCommit(scene);
 

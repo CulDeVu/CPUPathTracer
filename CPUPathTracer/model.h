@@ -82,17 +82,19 @@ void addObj(RTCScene& scene, string filename, vec3 origin = vec3(), float scale 
 		}
 		rtcUnmapBuffer(scene, mesh, RTC_INDEX_BUFFER);
 
-		float a0 = materials[shapes[i].mesh.material_ids[0]].diffuse[0];
-		float a1 = materials[shapes[i].mesh.material_ids[0]].diffuse[1];
-		float a2 = materials[shapes[i].mesh.material_ids[0]].diffuse[2];
+		int material_id = shapes[i].mesh.material_ids[0];
 
-		float e0 = materials[shapes[i].mesh.material_ids[0]].emission[0];
-		float e1 = materials[shapes[i].mesh.material_ids[0]].emission[1];
-		float e2 = materials[shapes[i].mesh.material_ids[0]].emission[2];
+		float a0 = materials[material_id].diffuse[0];
+		float a1 = materials[material_id].diffuse[1];
+		float a2 = materials[material_id].diffuse[2];
+
+		float e0 = materials[material_id].emission[0];
+		float e1 = materials[material_id].emission[1];
+		float e2 = materials[material_id].emission[2];
 		
-		float f0 = materials[shapes[i].mesh.material_ids[0]].specular[0];
-		float f1 = materials[shapes[i].mesh.material_ids[0]].specular[1];
-		float f2 = materials[shapes[i].mesh.material_ids[0]].specular[2];
+		float f0 = materials[material_id].specular[0];
+		float f1 = materials[material_id].specular[1];
+		float f2 = materials[material_id].specular[2];
 
 		int tId = loadTexture(materials[shapes[i].mesh.material_ids[0]].diffuse_texname);
 		if (tId == -1)
@@ -110,24 +112,27 @@ void addObj(RTCScene& scene, string filename, vec3 origin = vec3(), float scale 
 			}
 		}
 
-		materialLayer* ml;
-		//if (e0 == 0 && e1 == 0 && e2 == 0)
-		{
-			ml = createDiffuseLayer(tId);
-		}
-
 		// create model
 		model* m = new model();
 		m->geom_id = mesh;
 		printf("%d\n", mesh);
 		m->indices = shapes[i].mesh.indices;
 		m->uv = shapes[i].mesh.texcoords;
-		/*m->mat = material();
-		m->mat.Albedo = color(a0, a1, a2);
-		m->mat.Emmision = color(e0, e1, e2) * 1;
-		m->mat.albedoTex = tId;*/
-		m->mat.addLayerBottom(ml);
 		models.push_back(m);
+
+		// add material layers here
+		if (e0 + e1 + e2 > 0)
+		{
+			m->mat.addLayerBottom(createEmmisionLayer(color(e0, e1, e2)));
+		}
+		else
+		{
+			m->mat.addLayerBottom(createDiffuseLayer(tId));
+			//m->mat.addLayerBottom(createMicrofacetLayer(1, 1, color(a0, a1, a2)));
+		}
+		//m->mat.addLayerBottom(createEmmisionLayer(color(e0, e1, e2)));
+		//m->mat.addLayerBottom(createMicrofacetLayer(0.5, 1 - materials[material_id].shininess, color(1, 1, 1)));
+		
 	}
 }
 

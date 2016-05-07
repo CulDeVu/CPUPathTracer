@@ -80,3 +80,7 @@ struct color
 		return ret;
 	}
 };
+
+// useful constants
+color SKY_BLACK = color(0, 0, 0);
+color SKY_BRIGHT = color(12, 12, 12);

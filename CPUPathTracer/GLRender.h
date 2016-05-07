@@ -6,12 +6,14 @@
 
 #pragma comment(lib, "opengl32.lib")
 
-std::thread loopingThread;
+//std::thread loopingThread;
 GLuint tex;
 HWND window;
 HDC hDC;
 HGLRC hGLRC;
 HPALETTE hPalette;
+
+bool running = true;
 
 void init()
 {
@@ -267,7 +269,7 @@ LPARAM lParam)
 void threadLoop()
 {
 	MSG msg;
-	while (TRUE)
+	while (running)
 	{
 		// Check to see if any messages are waiting in the queue
 		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
@@ -317,5 +319,8 @@ void threadedRenderWindow()
 }
 void exitThreadedRenderWindow()
 {
-	renderWindow.join();
+	if (renderWindow.joinable())
+		renderWindow.join();
+
+	running = false;
 }

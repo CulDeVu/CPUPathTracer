@@ -38,13 +38,22 @@ public:
 	// microfacet
 	float m;
 
-	// light source
-	color emmision;
+	// refractions
+	float ior;
 
+	// color information
 	int hueTexId;
+	color hue;
+
+	color getHue(float u, float v)
+	{
+		if (hueTexId == -1)
+			return hue;
+		return fetch(hueTexId, u, v);
+	}
 
 	materialLayer()
-		: Fresnel(0), m(1), emmision(color(0, 0, 0)), hueTexId(-1) {}
+		: Fresnel(0), m(1), hueTexId(-1) {}
 };
 
 materialLayer* createDiffuseLayer(int texId)
@@ -62,6 +71,15 @@ materialLayer* createMicrofacetLayer(float f, float m, color c = color(1, 1, 1))
 	newLayer->Fresnel = f;
 	newLayer->m = m;
 	newLayer->hueTexId = createSolidTexture(c);
+	return newLayer;
+}
+materialLayer* createEmmisionLayer(color c)
+{
+	materialLayer* newLayer = new materialLayer();
+	newLayer->type = EMMISION;
+	newLayer->Fresnel = 1;
+	newLayer->hueTexId = -1;
+	newLayer->hue = c;
 	return newLayer;
 }
 
@@ -222,7 +240,7 @@ float probabilityDensity(materialLayer* ml, vec3 norm, float u, float v, vec3 oD
 //-----------------------------------------------------------------------------
 color BRDFDiffuse(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
 {
-	return fetch(ml->hueTexId, u, v) / PI;
+	return ml->getHue(u, v) / PI;
 }
 color BRDFMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
 {
@@ -269,8 +287,9 @@ color BRDF(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
 //-----------------------------------------------------------------------------
 // Weights
 //-----------------------------------------------------------------------------
+color sampleWeightDiffuse(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
 {
-	return fetch(ml->hueTexId, u, v);
+	return ml->getHue(u, v);
 }
 color sampleWeightMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
 {
@@ -281,6 +300,7 @@ color sampleWeightMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec
 color sampleWeight(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
 {
 	if (ml->type == DIFFUSE)
+		return sampleWeightDiffuse(ml, norm, u, v, oDir, half, iDir);
 	if (ml->type == MICROFACET)
 		return sampleWeightMicrofacet(ml, norm, u, v, oDir, half, iDir);
 	return color(1, 0, 1);

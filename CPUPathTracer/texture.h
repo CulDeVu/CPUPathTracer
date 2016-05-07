@@ -79,6 +79,11 @@ int loadTexture(string filename)
 {
 	if (textures.size() > 40)
 		return -1;
+	if (filename.size() == 0)
+	{
+		printf("No filename to load\n");
+		return -1;
+	}
 	
 	for (int i = 0; i < textures.size(); ++i)
 	{
@@ -91,7 +96,7 @@ int loadTexture(string filename)
 	unsigned char *data = stbi_load(filename.c_str(), &w, &h, &n, 0);
 	if (data == NULL)
 	{
-		printf("Could not find texture file: %s\n", filename.c_str());
+		printf("Could not find texture file: \"%s\"\n", filename.c_str());
 		return -1;
 	}
 	printf("Loaded texture file: %s\n", filename.c_str());
