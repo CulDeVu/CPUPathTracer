@@ -33,7 +33,8 @@ public:
 	MATERIAL_LAYER_TYPE type;
 
 	// top layers
-	float Fresnel;
+	int fresnelTexId;
+	//float Fresnel;
 
 	// microfacet
 	float m;
@@ -52,32 +53,39 @@ public:
 		return fetch(hueTexId, u, v);
 	}
 
+	float getFresnel(vec2 uv)
+	{
+		if (fresnelTexId == -1)
+			return 1;
+		return fetch(fresnelTexId, uv.x, uv.y).r;
+	}
+
 	materialLayer()
-		: Fresnel(0), m(1), hueTexId(-1) {}
+		: fresnelTexId(-1), m(1), hueTexId(-1) {}
 };
 
 materialLayer* createDiffuseLayer(int texId)
 {
 	materialLayer* newLayer = new materialLayer();
 	newLayer->type = DIFFUSE;
-	newLayer->Fresnel = 1;
+	newLayer->fresnelTexId = TEXTURE_WHITE;
 	newLayer->hueTexId = texId;
 	return newLayer;
 }
-materialLayer* createMicrofacetLayer(float f, float m, color c = color(1, 1, 1))
+materialLayer* createMicrofacetLayer(int fresnelTexId, float m)
 {
 	materialLayer* newLayer = new materialLayer();
 	newLayer->type = MICROFACET;
-	newLayer->Fresnel = f;
+	newLayer->fresnelTexId = fresnelTexId;
 	newLayer->m = m;
-	newLayer->hueTexId = createSolidTexture(c);
+	//newLayer->hueTexId = createSolidTexture(color(1, 1, 1));
 	return newLayer;
 }
 materialLayer* createEmmisionLayer(color c)
 {
 	materialLayer* newLayer = new materialLayer();
 	newLayer->type = EMMISION;
-	newLayer->Fresnel = 1;
+	newLayer->fresnelTexId = TEXTURE_WHITE;
 	newLayer->hueTexId = -1;
 	newLayer->hue = c;
 	return newLayer;
@@ -145,7 +153,7 @@ float BeckmanD(vec3 m, vec3 norm, float alpha)
 	
 	float positivity = (NDotM > 0) ? 1.0f : 0.0f;
 
-	float theta_m = acos(NDotM);
+	float theta_m = glm::clamp(acos(NDotM), -PI / 2 + 0.001f, PI / 2 - 0.001f);
 	float coef = -pow(tan(theta_m), 2) / (alpha * alpha);
 	float denom = pow(alpha, 2) * pow(NDotM, 4);
 	if (denom < 0.001)
@@ -248,8 +256,8 @@ color BRDFMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, 
 	vec3 vDir = oDir;
 	vec3 hDir = normalize(lDir + vDir);
 
-	float LDotH = max(0, dot(lDir, hDir));
-	float NDotH = max(0, dot(norm, hDir));
+	float LDotH = max(0.001, dot(lDir, hDir));
+	float NDotH = max(0.001, dot(norm, hDir));
 
 	float LDotN = dot(lDir, norm);
 	float ODotN = dot(oDir, norm);
@@ -264,13 +272,13 @@ color BRDFMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, 
 
 	float GeometryTerm = SmithG1Approx(iDir, hDir, norm, alpha) * SmithG1Approx(oDir, hDir, norm, alpha);
 
-	float denom = 4 * LDotN * ODotN;
+	float denom = max(0.001, 4 * LDotN * ODotN);
 
 	color f_microfacet = FresnelTerm * GeometryTerm * DistributionTerm / denom;
 
 	if (f_microfacet.r != f_microfacet.r)
 	{
-		printf("asdfasfda");
+		printf("Microfacet BRDF experiencing discontinuities\n");
 	}
 
 	return f_microfacet;
@@ -305,4 +313,3 @@ color sampleWeight(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, ve
 		return sampleWeightMicrofacet(ml, norm, u, v, oDir, half, iDir);
 	return color(1, 0, 1);
 }
-

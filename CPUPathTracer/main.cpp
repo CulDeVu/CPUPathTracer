@@ -31,10 +31,10 @@ using namespace glm;
 
 const int imageWidth = 500,
 		  imageHeight = 500;
-const int NUM_SAMPLES = 50,
-		  NUM_BOUNCES = 3;
+const int NUM_SAMPLES = 1000,
+		  NUM_BOUNCES = 2;
 
-const color SKY_ILLUMINATION = SKY_BLACK;
+const color SKY_ILLUMINATION = SKY_BRIGHT;
 
 color buffer[imageWidth][imageHeight];
 #include "GLRender.h"
@@ -85,6 +85,239 @@ float roundDown(float x)
 	if (x < 0)
 		--ret;
 	return ret;
+}
+
+struct pathNode
+{
+	vec3 pt;
+	vec3 iDir;
+	vec3 norm;
+	color f_r;
+	float pdf;
+};
+
+pathNode importanceSample(vec3 pt, layeredMaterial mat, vec3 norm, vec2 uv, vec3 oDir)
+{
+	vec3 half = importanceSampleHalfVector(mat.layers[0], norm, uv.x, uv.y, oDir);
+
+	vec3 iDir = half * dot(oDir, half) * 2.0f - oDir;
+
+	color weight = sampleWeight(mat.layers[0], norm, uv.x, uv.y, oDir, half, iDir);
+
+	pathNode ret;
+	ret.pt = pt;
+	ret.iDir = iDir;
+	ret.norm = norm;
+	ret.f_r = weight;
+	ret.pdf = abs(dot(norm, iDir));
+
+	return ret;
+}
+
+void importanceSampleBRDF(vec3 pt, materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3* ret_iDir, color* ret_weight)
+{
+	vec3 half = importanceSampleHalfVector(ml, norm, uv.x, uv.y, oDir);
+
+	vec3 iDir = half * dot(oDir, half) * 2.0f - oDir;
+	
+	*ret_iDir = iDir;
+	//*ret_pdf = probabilityDensity(ml, norm, uv.x, uv.y, oDir, half, iDir);
+	*ret_weight = sampleWeight(ml, norm, uv.x, uv.y, oDir, half, iDir);
+}
+void importanceSampleLight(vec3 pt, materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3* ret_iDir, color* ret_weight)
+{
+	float r1, r2;
+	r1 = nrand();
+	r2 = nrand();
+
+	vec3 x2 = vec3(3 * r1 - 1.5, 6, 12 * r2 - 6);
+	vec3 dirXtoX2 = x2 - pt;
+	vec3 iDir = normalize(x2 - pt);
+
+	vec3 norm2 = vec3(0, -1, 0);
+	float prob = 1.f / (3.f * 12.f);
+	float cosAngle = dot(norm, iDir);
+	float cosAngle2 = dot(norm2, -iDir);
+	float G = max(0.001, cosAngle2) / dot(dirXtoX2, dirXtoX2);
+
+	color brdf = BRDF(ml, norm, uv.x, uv.y, oDir, iDir);
+	int chi = dot(norm, norm2) < 0 ? 1 : 0;
+
+	*ret_iDir = iDir;
+	//*ret_pdf = max(0.001f, prob / G);
+	*ret_weight = brdf * chi * max(0.001, cosAngle2) / (dot(dirXtoX2, dirXtoX2) * prob);
+}
+
+
+color radiance2(vec3 o, vec3 ray, int bounces)
+{
+	vector<pathNode> path;
+
+	pathNode camera;
+	camera.pt = o;
+	camera.iDir = ray;
+	camera.f_r = color(1, 1, 1);
+	//camera.prob_dA = 1;
+
+	vec3 pos = o;
+	vec3 oDir = -ray;
+	for (int i = 0; i < bounces; ++i)
+	{
+		RTCRay rtcODir = makeRay(pos, oDir);
+		rtcIntersect(scene, rtcODir);
+		if (rtcODir.tfar == maxFloat)
+			return color(0, 0, 0);
+
+		model* curModel = models[rtcODir.geomID];
+
+		// calculate the UV coords
+		float u = 1, v = 1;
+		if (curModel->uv.size() != 0)
+		{
+			int primId = rtcODir.primID;
+			float u0, u1, u2;
+			float v0, v1, v2;
+
+			u0 = curModel->uv[2 * curModel->indices[3 * primId + 0]];
+			u1 = curModel->uv[2 * curModel->indices[3 * primId + 1]];
+			u2 = curModel->uv[2 * curModel->indices[3 * primId + 2]];
+
+			v0 = curModel->uv[2 * curModel->indices[3 * primId + 0] + 1];
+			v1 = curModel->uv[2 * curModel->indices[3 * primId + 1] + 1];
+			v2 = curModel->uv[2 * curModel->indices[3 * primId + 2] + 1];
+
+			u = rtcODir.u * u1 + rtcODir.v * u2 + (1 - rtcODir.u - rtcODir.v) * u0;
+			v = rtcODir.u * v1 + rtcODir.v * v2 + (1 - rtcODir.u - rtcODir.v) * v0;
+			u = u - roundDown(u);
+			v = v - roundDown(v);
+		}
+
+		float t = rtcODir.tfar;
+		t -= 0.001f;
+		if (t < 0.001f)
+			return color(0, 0, 0);
+
+		vec3 pos = o + ray * t;
+		vec3 normal = normalize(vec3(-rtcODir.Ng[0], -rtcODir.Ng[1], -rtcODir.Ng[2]));
+		if (dot(normal, ray * -1.0f) < 0)
+			normal = normal * -1.0f;
+
+		layeredMaterial mat = curModel->mat;
+
+		color total = color();
+
+		// simulates black body lights
+		if (mat.layers[0]->type == EMMISION)
+			return mat.layers[0]->getHue(0, 0);
+
+		float d1 = nrand();
+		for (int i = 0; i < mat.layers.size(); ++i)
+		{
+
+		}
+	}
+}
+
+color asdfjkl(vec3 o, vec3 ray)
+{
+	vec3 oDir = -ray;
+
+	RTCRay rtcNegODir = makeRay(o, ray);
+	rtcIntersect(scene, rtcNegODir);
+	if (rtcNegODir.tfar == maxFloat)
+	{
+		return SKY_ILLUMINATION;
+	}
+
+	model* curModel = models[rtcNegODir.geomID];
+
+	// calculate the UV coords
+	float u = 1, v = 1;
+	if (curModel->uv.size() != 0)
+	{
+		int primId = rtcNegODir.primID;
+		float u0, u1, u2;
+		float v0, v1, v2;
+
+		u0 = curModel->uv[2 * curModel->indices[3 * primId + 0]];
+		u1 = curModel->uv[2 * curModel->indices[3 * primId + 1]];
+		u2 = curModel->uv[2 * curModel->indices[3 * primId + 2]];
+
+		v0 = curModel->uv[2 * curModel->indices[3 * primId + 0] + 1];
+		v1 = curModel->uv[2 * curModel->indices[3 * primId + 1] + 1];
+		v2 = curModel->uv[2 * curModel->indices[3 * primId + 2] + 1];
+
+		u = rtcNegODir.u * u1 + rtcNegODir.v * u2 + (1 - rtcNegODir.u - rtcNegODir.v) * u0;
+		v = rtcNegODir.u * v1 + rtcNegODir.v * v2 + (1 - rtcNegODir.u - rtcNegODir.v) * v0;
+		u = u - roundDown(u);
+		v = v - roundDown(v);
+	}
+
+	float t = rtcNegODir.tfar;
+	t -= 0.001f;
+	if (t < 0.001f)
+		return color(0, 0, 0);
+
+	vec3 pos = o + ray * t;
+	vec3 normal = normalize(vec3(-rtcNegODir.Ng[0], -rtcNegODir.Ng[1], -rtcNegODir.Ng[2]));
+	if (dot(normal, ray * -1.0f) < 0)
+		normal = normal * -1.0f;
+
+	layeredMaterial mat = curModel->mat;
+
+	color total = color();
+
+	// simulates black body lights
+	if (mat.layers[0]->type == EMMISION)
+		return mat.layers[0]->getHue(0, 0);
+
+	float d1 = nrand();
+	for (int i = 0; i < mat.layers.size(); ++i)
+	{
+		float r1, r2;
+		r1 = nrand();
+		r2 = nrand();
+
+		vec3 x2 = vec3(3 * r1 - 1.5, 6, 12 * r2 - 6);
+		vec3 dirXtoX2 = x2 - pos;
+		vec3 iDir = normalize(x2 - pos);
+		vec3 half = normalize(oDir + iDir);
+
+		float f = Fresnel(oDir, half, mat.layers[i]->getFresnel(vec2(u, v)));
+		if (d1 > f)
+		{
+			d1 -= f;
+			continue;
+		}
+
+		color f_r = BRDF(mat.layers[i], normal, u, v, oDir, iDir);
+
+		float cosAngle = dot(normal, iDir);
+		
+		// next sample
+		RTCRay rtcIDir = makeRay(pos, iDir);
+		rtcIntersect(scene, rtcIDir);
+		
+		vec3 pos2 = pos + iDir * rtcIDir.tfar;
+		vec3 err = pos2 - x2;
+		if (dot(err, err) > 0.05)
+			return color(0, 0, 0);
+
+		model* model2 = models[rtcIDir.geomID];
+		color em = model2->mat.layers[0]->getHue(0, 0);
+		
+		vec3 normal2 = normalize(vec3(-rtcIDir.Ng[0], -rtcIDir.Ng[1], -rtcIDir.Ng[2]));
+		if (dot(normal2, ray * -1.0f) < 0)
+			normal2 = normal2 * -1.0f;
+
+		float prob = 1.f / (3.f * 12.f);
+		float cosAngle2 = dot(normal2, -iDir);
+		float G = abs(cosAngle * cosAngle2) / dot(dirXtoX2, dirXtoX2);
+
+		color F = em.mul(f_r) * G / prob;
+
+		return F;
+	}
 }
 color radiance(vec3 o, vec3 ray, float bounces)
 {
@@ -146,7 +379,7 @@ color radiance(vec3 o, vec3 ray, float bounces)
 	float d1 = nrand();
 	for (int i = 0; i < mat.layers.size(); ++i)
 	{
-		vec3 half = importanceSampleHalfVector(mat.layers[i], normal, u, v, oDir);
+		/*vec3 half = importanceSampleHalfVector(mat.layers[i], normal, u, v, oDir);
 
 		float f = Fresnel(oDir, half, mat.layers[i]->Fresnel);
 		if (d1 > f)
@@ -159,6 +392,63 @@ color radiance(vec3 o, vec3 ray, float bounces)
 
 		color L_i = radiance(pos, iDir, bounces - 1);
 		color weight = sampleWeight(mat.layers[i], normal, u, v, oDir, half, iDir);
+
+		total = L_i.mul(weight);
+
+		break;*/
+
+		vec3 iDir;
+		color weight;
+
+		enum sampleStrategy
+		{
+			ss_BRDF, ss_LIGHT
+		};
+		sampleStrategy curStrategy;
+		float mul = 1.0f;
+
+		/*if (bounces == 1)
+		{
+			curStrategy = ss_LIGHT;
+			mul = 1.0f;
+		}
+		else
+		{
+			float r1 = nrand();
+			if (r1 < 0.0f)
+			{
+				curStrategy = ss_LIGHT;
+				mul = 0.0f;
+			}
+			else
+			{
+				curStrategy = ss_BRDF;
+				mul = 1.0f;
+			}
+		}*/
+		curStrategy = ss_BRDF;
+
+		if (curStrategy == ss_LIGHT)
+		{
+			importanceSampleLight(pos, mat.layers[i], normal, vec2(u, v), oDir, &iDir, &weight);
+		}
+		else
+			importanceSampleBRDF(pos, mat.layers[i], normal, vec2(u, v), oDir, &iDir, &weight);
+
+		vec3 half = normalize(iDir + oDir);
+
+		float f = Fresnel(oDir, half, mat.layers[i]->getFresnel(vec2(u, v)));
+		if (d1 > f)
+		{
+			d1 -= f;
+			continue;
+		}
+
+		color L_i;
+		if (curStrategy == ss_LIGHT)
+			L_i = radiance(pos, iDir, 0);
+		else
+			L_i = radiance(pos, iDir, bounces - 1);
 
 		total = L_i.mul(weight);
 
@@ -175,33 +465,35 @@ int main()
 	threadedRenderWindow();
 
 	scene = rtcDeviceNewScene(device, RTC_SCENE_STATIC, RTC_INTERSECT1);
-	//addObj(scene, "models/sponza.obj");
+	//addObj(scene, "models/sponza_light.obj");
+	addObj(scene, "C:/Users/Daniel/Downloads/sanMiguel/sanMiguel.obj");
+	//addObj(scene, "models/a.obj");
 	//addObj(scene, "models/teapot.obj", vec3(0.8, 0, -2), 1.0);
 	//addObj(scene, "models/lenin.obj", vec3(0.0, -0.1, -1), 1.0);
 	//addObj(scene, "models/cube.obj", vec3(0, -0.9, -2), 1.0f);
-	//addObj(scene, "models/dragon_simple.obj", vec3(0, 0, 0), 3.0f);
-	addObj(scene, "models/CornellBox-Original.obj", vec3(0, 0, 2));
+	//addObj(scene, "models/dragon_simple.obj", vec3(0, 0, -1), 2.5f);
+	//addObj(scene, "models/CornellBox-Original.obj", vec3(0, 0, 2));
 	//models[models.size() - 1]->mat.albedoTex = createSolidTexture(color(0.2, 0.2, 0.2));
 	//models[models.size() - 1]->mat.m = 0.02;
 	//models[models.size() - 1]->mat.Fresnel = color(0.8, 0.8, 0.8);
 
 	//models[models.size() - 1]->mat.addLayerTop(createEmmisionLayer(color(17, 12, 4)));
 
-	/*for (int i = 0; i < models.size(); ++i)
+	for (int i = 0; i < models.size(); ++i)
 	{
 		if (models[i]->mat.layers[0]->hueTexId == 21)
 		{
 			//models[i]->mat.Fresnel = color(0.6, 0.6, 0.6);
 			//models[i]->mat.m = 0.001;
-			models[i]->mat.addLayerTop(createMicrofacetLayer(0.6, 0.001));
+			//models[i]->mat.addLayerTop(createMicrofacetLayer(0.6, createSolidTexture(color(0.001, 0.001, 0.001))));
 			//printf("%d\n", i);
 		}
 		/*else
 		{
 			models[i]->mat.Fresnel = color(0, 0, 0);
 			models[i]->mat.m = 1;
-		}*
-	}*/
+		}*/
+	}
 
 	rtcCommit(scene);
 
@@ -230,7 +522,10 @@ int main()
 
 				vec3 ray = vec3(((float)x / imageWidth - 1.0f / 2) * nearhW + rx, ((float)y / imageHeight - 1.0f / 2) * nearhH + ry, -zNear);
 
-				color sampleColor = radiance(vec3(0, 1, 5), normalize(ray), NUM_BOUNCES);
+				vec3 o = vec3(-2.77, -10, 3.5f);
+				//vec3 o = vec3(0, 1, 1);
+				color sampleColor = radiance(o, normalize(ray), NUM_BOUNCES);
+				//color sampleColor = asdfjkl(vec3(0, 1, 3.5f), normalize(ray));
 
 				totalColor = (totalColor * (i - 1.0f) + sampleColor) / i;
 
@@ -283,7 +578,7 @@ int main()
 	file.close();
 
 	cout << "Finished" << endl;
-	cin.get();
+	getchar();
 
 	//rtcDeleteScene(scene);
 	//rtcExit();

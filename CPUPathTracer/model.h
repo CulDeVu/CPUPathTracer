@@ -43,11 +43,13 @@ vector<model*> lights;
 void addObj(RTCScene& scene, string filename, vec3 origin = vec3(), float scale = 1)
 {
 	printf("Loading .obj file: %s\n", filename.c_str());
+
+	//int asdf = createSolidTexture(color(0.001f, 0.001f, 0.001f));
 	
 	vector<shape_t> shapes;
 	vector<material_t> materials;
 
-	string err = LoadObj(shapes, materials, filename.c_str(), "models/");
+	string err = LoadObj(shapes, materials, filename.c_str(), "C:/Users/Daniel/Downloads/sanMiguel/");
 
 	if (!err.empty())
 	{
@@ -99,9 +101,12 @@ void addObj(RTCScene& scene, string filename, vec3 origin = vec3(), float scale 
 		int tId = loadTexture(materials[shapes[i].mesh.material_ids[0]].diffuse_texname);
 		if (tId == -1)
 		{
-			printf("instead, generated color texture: %f, %f, %f", (double)a0, (double)a1, (double)a2);
+			printf("instead, generated diffuse texture: %f, %f, %f\n", (double)a0, (double)a1, (double)a2);
 			tId = createSolidTexture(color(a0, a1, a2));
 		}
+
+		//printf("%s\n", materials[shapes[i].mesh.material_ids[0]].specular_texname);
+		int fresnelTexID = loadTexture(materials[shapes[i].mesh.material_ids[0]].specular_texname);
 
 		if (shapes[i].mesh.texcoords.size() == 0)
 		{
@@ -124,9 +129,16 @@ void addObj(RTCScene& scene, string filename, vec3 origin = vec3(), float scale 
 		if (e0 + e1 + e2 > 0)
 		{
 			m->mat.addLayerBottom(createEmmisionLayer(color(e0, e1, e2)));
+			lights.push_back(m);
 		}
 		else
 		{
+			if (fresnelTexID != -1)
+			{
+				//printf("wat\n");
+				m->mat.addLayerBottom(createMicrofacetLayer(fresnelTexID, 0.001f));
+			}
+			
 			m->mat.addLayerBottom(createDiffuseLayer(tId));
 			//m->mat.addLayerBottom(createMicrofacetLayer(1, 1, color(a0, a1, a2)));
 		}

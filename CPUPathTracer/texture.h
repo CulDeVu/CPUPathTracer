@@ -77,8 +77,11 @@ int createSolidTexture(color c)
 
 int loadTexture(string filename)
 {
-	if (textures.size() > 40)
+	if (textures.size() > 80)
+	{
+		printf("Too many textures. Failing.\n");
 		return -1;
+	}
 	if (filename.size() == 0)
 	{
 		printf("No filename to load\n");
@@ -123,3 +126,5 @@ int loadTexture(string filename)
 	textures.push_back(t);
 	return textures.size() - 1;
 }
+
+const int TEXTURE_WHITE = createSolidTexture(color(1, 1, 1));
