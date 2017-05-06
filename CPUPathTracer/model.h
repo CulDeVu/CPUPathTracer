@@ -49,7 +49,7 @@ void addObj(RTCScene& scene, string filename, vec3 origin = vec3(), float scale 
 	vector<shape_t> shapes;
 	vector<material_t> materials;
 
-	string err = LoadObj(shapes, materials, filename.c_str(), "C:/Users/Daniel/Downloads/sanMiguel/");
+	string err = LoadObj(shapes, materials, filename.c_str(), "models/");
 
 	if (!err.empty())
 	{

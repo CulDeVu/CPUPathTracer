@@ -81,6 +81,15 @@ struct color
 	}
 };
 
+float dot(color a, color b)
+{
+	return a.r*b.r + a.g*b.g + a.b*b.b;
+}
+float length(color a)
+{
+	return sqrt(dot(a, a));
+}
+
 // useful constants
 color SKY_BLACK = color(0, 0, 0);
 color SKY_BRIGHT = color(12, 12, 12);
