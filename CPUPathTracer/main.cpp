@@ -140,12 +140,12 @@ void importanceSampleLight(vec3 pt, materialLayer* ml, vec3 norm, vec2 uv, vec3 
 	float cosAngle2 = dot(norm2, -iDir);
 	float G = max(0.001, cosAngle2) / dot(dirXtoX2, dirXtoX2);
 
-	color brdf = BRDF(ml, norm, uv.x, uv.y, iDir, oDir);
-	int chi = dot(norm, norm2) < 0 ? 1 : 0;
+	color brdf = BRDF(ml, norm, uv.x, uv.y, oDir, iDir);
+	int chi = 1.f;// dot(norm, norm2) < 0 ? 1 : 0;
 
 	*ret_iDir = iDir;
 	//*ret_pdf = max(0.001f, prob / G);
-	*ret_weight = brdf * chi * abs(cosAngle * cosAngle2) / (dot(dirXtoX2, dirXtoX2) * prob);
+	*ret_weight = clamp(brdf * chi * abs(cosAngle * cosAngle2) / (dot(dirXtoX2, dirXtoX2) * prob), 0, 1);
 }
 
 
@@ -306,14 +306,15 @@ color radiance(vec3 o, vec3 ray, float bounces)
 		sampleStrategy curStrategy;
 		float mul = 1.0f;
 
-		/*if (bounces == 1)
+		if (bounces == 1)
 		{
 			curStrategy = ss_LIGHT;
 			mul = 1.0f;
 		}
 		else
 		{
-			float r1 = nrand();
+			curStrategy = ss_BRDF;
+			/*float r1 = nrand();
 			if (r1 < 0.5f && mat.layers[i]->type == DIFFUSE)
 			{
 				curStrategy = ss_LIGHT;
@@ -323,9 +324,9 @@ color radiance(vec3 o, vec3 ray, float bounces)
 			{
 				curStrategy = ss_BRDF;
 				mul = 1.0f;
-			}
-		}*/
-		curStrategy = ss_BRDF;
+			}*/
+		}
+		//curStrategy = ss_LIGHT;
 
 		if (curStrategy == ss_LIGHT)
 		{
@@ -368,7 +369,7 @@ float w(vec2 d, color c, float var_d, float var_c)
 }
 void bilateral()
 {
-	const int kernelSize = 21;
+	const int kernelSize = 9;
 	const int hsize = (kernelSize - 1) / 2;
 
 	color* computedBuffer = new color[imageWidth*imageHeight];
@@ -457,7 +458,7 @@ int main()
 	//addObj(scene, "models/teapot.obj", vec3(0.8, 0, -2), 1.0);
 	//addObj(scene, "models/lenin.obj", vec3(0.0, -0.1, -1), 1.0);
 	//addObj(scene, "models/cube.obj", vec3(0, -0.9, -2), 1.0f);
-	//addObj(scene, "models/dragon_simple.obj", vec3(0, 0, -1), 2.5f);
+	addObj(scene, "models/dragon_simple.obj", vec3(0, 0, 0), 2.5f);
 	//addObj(scene, "models/CornellBox-Original.obj", vec3(0, 0, 2));
 	//models[models.size() - 1]->mat.albedoTex = createSolidTexture(color(0.2, 0.2, 0.2));
 	//models[models.size() - 1]->mat.m = 0.02;
@@ -509,7 +510,7 @@ int main()
 				vec3 ray = vec3(((float)x / imageWidth - 1.0f / 2) * nearhW + rx, ((float)y / imageHeight - 1.0f / 2) * nearhH + ry, -zNear);
 
 				//vec3 o = vec3(-2.77, -10, 3.5f);
-				vec3 o = vec3(0, 1, 5);
+				vec3 o = vec3(0, 1, 3.5);
 				color sampleColor = radiance(o, normalize(ray), NUM_BOUNCES);
 				//color sampleColor = asdfjkl(vec3(0, 1, 3.5f), normalize(ray));
 

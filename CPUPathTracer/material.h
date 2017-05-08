@@ -39,9 +39,6 @@ public:
 	// microfacet
 	float m;
 
-	// refractions
-	float ior;
-
 	// color information
 	int hueTexId;
 	color hue;
@@ -167,7 +164,7 @@ float SmithG1Approx(vec3 v, vec3 m, vec3 norm, float alpha)
 	float VDotN = dot(v, norm);
 
 	float theta_v = acos(VDotN);
-	float a = 1 / (alpha * tan(theta_v));
+	float a = 1 / max(0.01, alpha * tan(theta_v));
 
 	float positivity = (VDotM / VDotN > 0) ? 1.0f : 0.0f;
 
@@ -281,7 +278,7 @@ color BRDFMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, 
 		printf("Microfacet BRDF experiencing discontinuities\n");
 	}
 
-	return f_microfacet;
+	return clamp(f_microfacet, 0, 10);
 }
 color BRDF(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
 {
@@ -303,7 +300,8 @@ color sampleWeightMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec
 {
 	float alpha = ml->m;
 	float  G = SmithG1Approx(iDir, half, norm, alpha) * SmithG1Approx(oDir, half, norm, alpha);
-	return color(1, 1, 1) * G * dot(oDir, half) / (dot(iDir, norm) * dot(half, norm));
+	color final = color(1, 1, 1) * G * dot(oDir, half) / max(0.001, dot(iDir, norm) * dot(half, norm));
+	return clamp(final, 0, 10);
 }
 color sampleWeight(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
 {

@@ -64,6 +64,11 @@ void updateTex()
 		int x = i % imageWidth;
 		int y = imageHeight - i / imageWidth - 1;
 		color c = buffer[x][y].normalized();
+
+		c.r = floor(c.r * 2.f + 0.5) / 2.f;
+		c.g = floor(c.g * 2.f + 0.5) / 2.f;
+		c.b = floor(c.b * 2.f + 0.5) / 2.f;
+
 		pixels[3 * i + 0] = c.r;
 		pixels[3 * i + 1] = c.g;
 		pixels[3 * i + 2] = c.b;

@@ -114,9 +114,18 @@ int loadTexture(string filename)
 	t.data = new float[w * h * 3];
 	for (int i = 0; i < w * h; ++i)
 	{
-		float r = (float)(data[n * i + 0]) / 255.0f;
-		float g = (float)(data[n * i + 1]) / 255.0f;
-		float b = (float)(data[n * i + 2]) / 255.0f;
+		float r, g, b;
+
+		if (n < 3)
+		{
+			r = g = b = (float)(data[i]) / 255.0f;
+		}
+		else
+		{
+			r = (float)(data[n * i + 0]) / 255.0f;
+			g = (float)(data[n * i + 1]) / 255.0f;
+			b = (float)(data[n * i + 2]) / 255.0f;
+		}
 
 		t.data[3 * i + 0] = r;
 		t.data[3 * i + 1] = g;

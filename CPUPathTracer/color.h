@@ -89,6 +89,14 @@ float length(color a)
 {
 	return sqrt(dot(a, a));
 }
+color clamp(color c, float a, float b)
+{
+	color ret;
+	ret.r = clamp(c.r, a, b);
+	ret.g = clamp(c.g, a, b);
+	ret.b = clamp(c.b, a, b);
+	return ret;
+}
 
 // useful constants
 color SKY_BLACK = color(0, 0, 0);
