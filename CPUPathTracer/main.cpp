@@ -32,7 +32,7 @@ using namespace glm;
 const int imageWidth = 500,
 		  imageHeight = 500;
 const int NUM_SAMPLES = 50,
-		  NUM_BOUNCES = 1;
+		  NUM_BOUNCES = 2;
 
 const color SKY_ILLUMINATION = SKY_BLACK;
 
@@ -87,49 +87,22 @@ float roundDown(float x)
 	return ret;
 }
 
-struct pathNode
+void importanceSampleBRDF(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3* ret_iDir, color* ret_weight)
 {
-	vec3 pt;
-	vec3 iDir;
-	vec3 norm;
-	color f_r;
-	float pdf;
-};
-
-pathNode importanceSample(vec3 pt, layeredMaterial mat, vec3 norm, vec2 uv, vec3 oDir)
-{
-	vec3 half = importanceSampleHalfVector(mat.layers[0], norm, uv.x, uv.y, oDir);
-
-	vec3 iDir = half * dot(oDir, half) * 2.0f - oDir;
-
-	color weight = sampleWeight(mat.layers[0], norm, uv.x, uv.y, oDir, half, iDir);
-
-	pathNode ret;
-	ret.pt = pt;
-	ret.iDir = iDir;
-	ret.norm = norm;
-	ret.f_r = weight;
-	ret.pdf = abs(dot(norm, iDir));
-
-	return ret;
-}
-
-void importanceSampleBRDF(vec3 pt, materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3* ret_iDir, color* ret_weight)
-{
-	vec3 half = importanceSampleHalfVector(ml, norm, uv.x, uv.y, oDir);
+	vec3 half = importanceSampleHalfVector(ml, norm, uv, oDir);
 
 	vec3 iDir = half * dot(oDir, half) * 2.0f - oDir;
 	
 	*ret_iDir = iDir;
 	//*ret_pdf = probabilityDensity(ml, norm, uv.x, uv.y, oDir, half, iDir);
-	*ret_weight = sampleWeight(ml, norm, uv.x, uv.y, oDir, half, iDir);
+	*ret_weight = sampleWeight(ml, norm, uv, oDir, half, iDir);
 }
 void importanceSampleLight(vec3 pt, materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3* ret_iDir, color* ret_weight)
 {
 	float r1, r2;
 	r1 = nrand();
 	r2 = nrand();
-
+	
 	vec3 x2 = vec3(3 * r1 - 1.5, 6, 12 * r2 - 6);
 	vec3 dirXtoX2 = x2 - pt;
 	vec3 iDir = normalize(x2 - pt);
@@ -140,7 +113,7 @@ void importanceSampleLight(vec3 pt, materialLayer* ml, vec3 norm, vec2 uv, vec3 
 	float cosAngle2 = dot(norm2, -iDir);
 	float G = max(0.001, cosAngle2) / dot(dirXtoX2, dirXtoX2);
 
-	color brdf = BRDF(ml, norm, uv.x, uv.y, oDir, iDir);
+	color brdf = BRDF(ml, norm, uv, oDir, iDir);
 	int chi = 1.f;// dot(norm, norm2) < 0 ? 1 : 0;
 
 	*ret_iDir = iDir;
@@ -148,86 +121,63 @@ void importanceSampleLight(vec3 pt, materialLayer* ml, vec3 norm, vec2 uv, vec3 
 	*ret_weight = clamp(brdf * chi * abs(cosAngle * cosAngle2) / (dot(dirXtoX2, dirXtoX2) * prob), 0, 1);
 }
 
-
-color radiance2(vec3 o, vec3 ray, int bounces)
+materialLayer* randomlyPickMaterialLayer(layeredMaterial* mat)
 {
-	vector<pathNode> path;
+	float r = nrand();
 
-	pathNode camera;
-	camera.pt = o;
-	camera.iDir = ray;
-	camera.f_r = color(1, 1, 1);
-	//camera.prob_dA = 1;
-
-	vec3 pos = o;
-	vec3 oDir = -ray;
-	for (int i = 0; i < bounces; ++i)
+	for (int i = 0; i < mat->layers.size(); ++i)
 	{
-		RTCRay rtcODir = makeRay(pos, oDir);
-		rtcIntersect(scene, rtcODir);
-		if (rtcODir.tfar == maxFloat)
-			return color(0, 0, 0);
-
-		model* curModel = models[rtcODir.geomID];
-
-		// calculate the UV coords
-		float u = 1, v = 1;
-		if (curModel->uv.size() != 0)
+		float s = mat->layers[i]->fresnel;
+		if (r <= s)
 		{
-			int primId = rtcODir.primID;
-			float u0, u1, u2;
-			float v0, v1, v2;
-
-			u0 = curModel->uv[2 * curModel->indices[3 * primId + 0]];
-			u1 = curModel->uv[2 * curModel->indices[3 * primId + 1]];
-			u2 = curModel->uv[2 * curModel->indices[3 * primId + 2]];
-
-			v0 = curModel->uv[2 * curModel->indices[3 * primId + 0] + 1];
-			v1 = curModel->uv[2 * curModel->indices[3 * primId + 1] + 1];
-			v2 = curModel->uv[2 * curModel->indices[3 * primId + 2] + 1];
-
-			u = rtcODir.u * u1 + rtcODir.v * u2 + (1 - rtcODir.u - rtcODir.v) * u0;
-			v = rtcODir.u * v1 + rtcODir.v * v2 + (1 - rtcODir.u - rtcODir.v) * v0;
-			u = u - roundDown(u);
-			v = v - roundDown(v);
+			return mat->layers[i];
 		}
-
-		float t = rtcODir.tfar;
-		t -= 0.001f;
-		if (t < 0.001f)
-			return color(0, 0, 0);
-
-		vec3 pos = o + ray * t;
-		vec3 normal = normalize(vec3(-rtcODir.Ng[0], -rtcODir.Ng[1], -rtcODir.Ng[2]));
-		if (dot(normal, ray * -1.0f) < 0)
-			normal = normal * -1.0f;
-
-		layeredMaterial mat = curModel->mat;
-
-		color total = color();
-
-		// simulates black body lights
-		if (mat.layers[0]->type == EMMISION)
-			return mat.layers[0]->getHue(0, 0);
-
-		float d1 = nrand();
-		for (int i = 0; i < mat.layers.size(); ++i)
-		{
-
-		}
+		r -= s;
 	}
+
+	// should never happen
+	printf("randomlyPickMaterialLayer did something very unexpected. recovering gracefully?\n");
+	return mat->layers[mat->layers.size() - 1];
 }
 
-color radiance(vec3 o, vec3 ray, float bounces)
+// NOTE: this works due to BRDF reciprocity. If this changes, change this
+void pickMaterialLayerAndBRDFRay(layeredMaterial* mat, vec3 inDir, vec3 norm, vec2 uv, materialLayer** outMat, vec3* outDir, float* outInvPdf)
 {
-	vec3 oDir = -ray;
-	
+	float d1 = nrand();
+	for (int i = 0; i < mat->layers.size(); ++i)
+	{
+		materialLayer* ml = mat->layers[i];
+
+		vec3 half = importanceSampleHalfVector(ml, norm, uv, inDir);
+		vec3 iDir = half * dot(inDir, half) * 2.0f - inDir;
+
+		float f = Fresnel(inDir, half, ml->fresnel);
+		if (d1 <= f)
+		{
+			*outDir = iDir;
+			*outMat = ml;
+			*outInvPdf = 1.f / probabilityDensity(ml, norm, uv, half, iDir);
+			return;
+		}
+
+		d1 -= f;
+	}
+
+	printf("pickMaterialLayerAndBRDFRay: THIS SHOULD NEVER HAPPEN. THIS IS BAD.\n");
+}
+
+struct intersectionInfo
+{
+	float t;
+	vec2 uv;
+	vec3 pos;
+	vec3 normal;
+	layeredMaterial* mat;
+};
+void getIntersectionInfo(vec3 o, vec3 ray, intersectionInfo* ret)
+{
 	RTCRay rtcNegODir = makeRay(o, ray);
 	rtcIntersect(scene, rtcNegODir);
-	if (rtcNegODir.tfar == maxFloat)
-	{
-		return SKY_ILLUMINATION;
-	}
 
 	model* curModel = models[rtcNegODir.geomID];
 
@@ -249,53 +199,165 @@ color radiance(vec3 o, vec3 ray, float bounces)
 
 		u = rtcNegODir.u * u1 + rtcNegODir.v * u2 + (1 - rtcNegODir.u - rtcNegODir.v) * u0;
 		v = rtcNegODir.u * v1 + rtcNegODir.v * v2 + (1 - rtcNegODir.u - rtcNegODir.v) * v0;
-		u = u - roundDown(u);
-		v = v - roundDown(v);
+		ret->uv.x = u - roundDown(u);
+		ret->uv.y = v - roundDown(v);
 	}
 
-	float t = rtcNegODir.tfar;
-	t -= 0.001f;
-	if (t < 0.001f)
+	ret->t = rtcNegODir.tfar - 0.001f;
+
+	ret->pos = o + ray * ret->t;
+	ret->normal = normalize(vec3(-rtcNegODir.Ng[0], -rtcNegODir.Ng[1], -rtcNegODir.Ng[2]));
+	if (dot(ret->normal, ray * -1.0f) < 0)
+		ret->normal *= -1.0f;
+
+	ret->mat = &(curModel->mat);
+}
+
+color radiance_BDPT(vec3 o, vec3 ray, float bounces)
+{
+	vec3 pos[4];
+	vec2 uv[4];
+	vec3 normal[4];
+	materialLayer* mat[4];
+	float invPdf[4];
+	vec3 traceRay[4];
+	
+	// light path
+	{
+		float r1, r2;
+		r1 = nrand();
+		r2 = nrand();
+
+		pos[0] = vec3(3 * r1 - 1.5, 6, 12 * r2 - 6);
+		uv[0] = vec2();
+		normal[0] = vec3(0, -1, 0);
+		mat[0] = lights[0]->mat.layers[0];
+		invPdf[0] = 3 * 12;
+	}
+
+	// camera path
+	{
+		pos[3] = o;
+		uv[3] = vec2();
+		normal[3] = ray;
+		mat[3] = nullptr;
+		invPdf[3] = 1;
+		traceRay[3] = ray;
+	}
+	{
+		intersectionInfo trace;
+		getIntersectionInfo(o, ray, &trace);
+		pos[2] = trace.pos;
+		uv[2] = trace.uv;
+		normal[2] = trace.normal;
+		//randomlyPickMaterialLayer(trace.mat); // trace.mat->layers[trace.mat->layers.size() - 1];
+		pickMaterialLayerAndBRDFRay(trace.mat, -traceRay[3], normal[2], uv[2], &mat[2], &traceRay[2], &invPdf[1]);
+		invPdf[2] = 1;
+	}
+	{
+		vec3 iDir = randCosineWeightedRay(normal[2]);
+
+		intersectionInfo trace;
+		getIntersectionInfo(pos[2], iDir, &trace);
+
+		pos[1] = trace.pos;
+		uv[1] = trace.uv;
+		normal[1] = trace.normal;
+		mat[1] = randomlyPickMaterialLayer(trace.mat);
+
+		invPdf[1] = PI; // abs(dot(iDir, normal[2]));
+	}
+
+	int totalNumberOfSamples = 0;
+	color totalColor = color();
+
+	// direct lighting
+	{
+		vec3 dir = pos[0] - pos[2];
+		vec3 ndir = normalize(dir);
+		float dirLen = length(dir);
+		
+		RTCRay ray;
+		ray.org[0] = pos[2].x; ray.org[1] = pos[2].y; ray.org[2] = pos[2].z;
+		ray.dir[0] = ndir.x; ray.dir[1] = ndir.y; ray.dir[2] = ndir.z;
+		ray.tnear = 0;
+		ray.tfar = dirLen;
+		ray.geomID = RTC_INVALID_GEOMETRY_ID;
+
+		rtcOccluded(scene, ray);
+		if (ray.geomID != 0)
+		{
+			float G = abs(dot(normal[2], ndir) * dot(normal[0], ndir)) / dot(dir, dir);
+			G = clamp(G, 0.f, 1.f);
+			totalColor = totalColor + BRDF(mat[2], normal[2], uv[2], normalize(pos[3] - pos[2]), ndir).mul(mat[0]->getHue(vec2())) * G * invPdf[0];
+			++totalNumberOfSamples;
+		}
+	}
+
+	// secondary lighting
+	{
+		vec3 dir = pos[0] - pos[1];
+		vec3 ndir = normalize(dir);
+		float dirLen = length(dir);
+
+		RTCRay ray;
+		ray.org[0] = pos[1].x; ray.org[1] = pos[1].y; ray.org[2] = pos[1].z;
+		ray.dir[0] = ndir.x; ray.dir[1] = ndir.y; ray.dir[2] = ndir.z;
+		ray.tnear = 0;
+		ray.tfar = dirLen;
+		ray.geomID = RTC_INVALID_GEOMETRY_ID;
+
+		rtcOccluded(scene, ray);
+		if (ray.geomID != 0 && mat[1]->type != EMMISION)
+		{
+			float G0 = abs(dot(normal[1], ndir) * dot(normal[0], ndir)) / max(0.01f, dot(dir, dir));
+			//G0 = clamp(G0, 0.f, 0.5f);
+			color L_i = BRDF(mat[1], normal[1], uv[1], normalize(pos[2] - pos[1]), ndir) * G0 * invPdf[0];
+			//L_i = color(0.3, 0.3, 0.3);
+
+			dir = pos[1] - pos[2];
+			ndir = normalize(dir);
+
+			float G1 = 1;// abs(dot(normal[2], ndir));
+			color t = BRDF(mat[2], normal[2], uv[2], normalize(pos[3] - pos[2]), ndir).mul(L_i) * G1 * invPdf[1];
+			//t = clamp(t, 0, 1);
+			t = t.mul(mat[0]->getHue(vec2()));
+
+			totalColor = totalColor + t;
+			++totalNumberOfSamples;
+		}
+	}
+
+	if (totalNumberOfSamples == 0)
+		return color();
+	return totalColor / totalNumberOfSamples;
+}
+
+color radiance(vec3 o, vec3 ray, float bounces)
+{
+	vec3 oDir = -ray;
+	
+	intersectionInfo trace;
+	getIntersectionInfo(o, ray, &trace);
+
+	if (trace.t == maxFloat)
+		return SKY_ILLUMINATION;
+	if (trace.t < 0.001f)
 		return color(0, 0, 0);
-
-	vec3 pos = o + ray * t;
-	vec3 normal = normalize(vec3(-rtcNegODir.Ng[0], -rtcNegODir.Ng[1], -rtcNegODir.Ng[2]));
-	if (dot(normal, ray * -1.0f) < 0)
-		normal = normal * -1.0f;
-
-	layeredMaterial mat = curModel->mat;
 
 	color total = color();
 
 	// simulates black body lights
-	if (mat.layers[0]->type == EMMISION)
-		return mat.layers[0]->getHue(0, 0);
+	if (trace.mat->layers[0]->type == EMMISION)
+		return trace.mat->layers[0]->getHue(vec2());
 
 	if (bounces == 0)
 		return total;
 
 	// microfacet importance sampling
 	float d1 = nrand();
-	for (int i = 0; i < mat.layers.size(); ++i)
+	for (int i = 0; i < trace.mat->layers.size(); ++i)
 	{
-		/*vec3 half = importanceSampleHalfVector(mat.layers[i], normal, u, v, oDir);
-
-		float f = Fresnel(oDir, half, mat.layers[i]->Fresnel);
-		if (d1 > f)
-		{
-			d1 -= f;
-			continue;
-		}
-
-		vec3 iDir = half * dot(oDir, half) * 2.0f - oDir;
-
-		color L_i = radiance(pos, iDir, bounces - 1);
-		color weight = sampleWeight(mat.layers[i], normal, u, v, oDir, half, iDir);
-
-		total = L_i.mul(weight);
-
-		break;*/
-
 		vec3 iDir;
 		color weight;
 
@@ -304,40 +366,22 @@ color radiance(vec3 o, vec3 ray, float bounces)
 			ss_BRDF, ss_LIGHT
 		};
 		sampleStrategy curStrategy;
-		float mul = 1.0f;
 
 		if (bounces == 1)
-		{
 			curStrategy = ss_LIGHT;
-			mul = 1.0f;
-		}
 		else
-		{
 			curStrategy = ss_BRDF;
-			/*float r1 = nrand();
-			if (r1 < 0.5f && mat.layers[i]->type == DIFFUSE)
-			{
-				curStrategy = ss_LIGHT;
-				mul = 0.0f;
-			}
-			else
-			{
-				curStrategy = ss_BRDF;
-				mul = 1.0f;
-			}*/
-		}
-		//curStrategy = ss_LIGHT;
 
 		if (curStrategy == ss_LIGHT)
 		{
-			importanceSampleLight(pos, mat.layers[i], normal, vec2(u, v), oDir, &iDir, &weight);
+			importanceSampleLight(trace.pos, trace.mat->layers[i], trace.normal, trace.uv, oDir, &iDir, &weight);
 		}
 		else
-			importanceSampleBRDF(pos, mat.layers[i], normal, vec2(u, v), oDir, &iDir, &weight);
+			importanceSampleBRDF(trace.mat->layers[i], trace.normal, trace.uv, oDir, &iDir, &weight);
 
 		vec3 half = normalize(iDir + oDir);
 
-		float f = Fresnel(oDir, half, mat.layers[i]->getFresnel(vec2(u, v)));
+		float f = Fresnel(oDir, half, trace.mat->layers[i]->fresnel);
 		if (d1 > f)
 		{
 			d1 -= f;
@@ -346,9 +390,9 @@ color radiance(vec3 o, vec3 ray, float bounces)
 
 		color L_i;
 		if (curStrategy == ss_LIGHT)
-			L_i = radiance(pos, iDir, 0);
+			L_i = radiance(trace.pos, iDir, 0);
 		else
-			L_i = radiance(pos, iDir, bounces - 1);
+			L_i = radiance(trace.pos, iDir, bounces - 1);
 
 		total = L_i.mul(weight);
 
@@ -497,9 +541,9 @@ int main()
 			{
 				color totalColor = buffer[x][y];
 
-				float rx = 1.0f * (nrand() - 0.5f) / (imageWidth),
-				ry = 1.0f * (nrand() - 0.5f) / (imageHeight);
-				//float rx = 0, ry = 0;
+				//float rx = 1.0f * (nrand() - 0.5f) / (imageWidth),
+				//ry = 1.0f * (nrand() - 0.5f) / (imageHeight);
+				float rx = 0, ry = 0;
 
 				float aspect = (float)imageWidth / imageHeight;
 				float fovW = 3.14159 / 4;
@@ -511,7 +555,7 @@ int main()
 
 				//vec3 o = vec3(-2.77, -10, 3.5f);
 				vec3 o = vec3(0, 1, 3.5);
-				color sampleColor = radiance(o, normalize(ray), NUM_BOUNCES);
+				color sampleColor = radiance_BDPT(o, normalize(ray), NUM_BOUNCES);
 				//color sampleColor = asdfjkl(vec3(0, 1, 3.5f), normalize(ray));
 
 				totalColor = (totalColor * (i - 1.0f) + sampleColor) / i;
@@ -530,6 +574,7 @@ int main()
 			buffer[x][y] = buffer[x][y].normalized();
 		}
 	}
+	GLRender_isNormalized = true;
 
 	auto end = chrono::high_resolution_clock::now();
 

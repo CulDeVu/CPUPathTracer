@@ -21,8 +21,12 @@ struct color
 			r > maxFloat || g > maxFloat || b > maxFloat)
 			cout << "BAD COLOR VALUE: " << r << " " << g << " " << b << endl;
 
-		//return color(r / (r + 1), g / (g + 1), b / (b + 1));
-		return color(min(1, r), min(1, g), min(1, b));
+		float lum = greyscale();
+		float nl = lum / (lum + 1);
+		float scale = nl / lum;
+		return color(r*scale, g*scale, b*scale);
+		return color(r / (r + 1), g / (g + 1), b / (b + 1));
+		//return color(min(1, r), min(1, g), min(1, b));
 	}
 	color denormalized()
 	{

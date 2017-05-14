@@ -33,48 +33,48 @@ public:
 	MATERIAL_LAYER_TYPE type;
 
 	// top layers
-	int fresnelTexId;
-	//float Fresnel;
+	//int fresnelTexId;
+	float fresnel;
 
 	// microfacet
-	float m;
+	int roughnessTexId;
 
 	// color information
 	int hueTexId;
 	color hue;
 
-	color getHue(float u, float v)
+	color getHue(vec2 uv)
 	{
 		if (hueTexId == -1)
 			return hue;
-		return fetch(hueTexId, u, v);
+		return fetch(hueTexId, uv.x, uv.y);
 	}
 
-	float getFresnel(vec2 uv)
+	float getRoughness(vec2 uv)
 	{
-		if (fresnelTexId == -1)
+		if (roughnessTexId == -1)
 			return 1;
-		return fetch(fresnelTexId, uv.x, uv.y).r;
+		return 1.f - fetch(roughnessTexId, uv.x, uv.y).r;
 	}
 
 	materialLayer()
-		: fresnelTexId(-1), m(1), hueTexId(-1) {}
+		: fresnel(0), roughnessTexId(-1), hueTexId(-1) {}
 };
 
 materialLayer* createDiffuseLayer(int texId)
 {
 	materialLayer* newLayer = new materialLayer();
 	newLayer->type = DIFFUSE;
-	newLayer->fresnelTexId = TEXTURE_WHITE;
+	newLayer->fresnel = 1;
 	newLayer->hueTexId = texId;
 	return newLayer;
 }
-materialLayer* createMicrofacetLayer(int fresnelTexId, float m)
+materialLayer* createMicrofacetLayer(float fresnel, int texId)
 {
 	materialLayer* newLayer = new materialLayer();
 	newLayer->type = MICROFACET;
-	newLayer->fresnelTexId = fresnelTexId;
-	newLayer->m = m;
+	newLayer->fresnel = fresnel;
+	newLayer->roughnessTexId = texId;
 	//newLayer->hueTexId = createSolidTexture(color(1, 1, 1));
 	return newLayer;
 }
@@ -82,7 +82,7 @@ materialLayer* createEmmisionLayer(color c)
 {
 	materialLayer* newLayer = new materialLayer();
 	newLayer->type = EMMISION;
-	newLayer->fresnelTexId = TEXTURE_WHITE;
+	newLayer->fresnel = 1;
 	newLayer->hueTexId = -1;
 	newLayer->hue = c;
 	return newLayer;
@@ -102,24 +102,6 @@ public:
 		layers.push_back(l);
 	}
 };
-
-/*class material
-{
-public:
-	material()
-		: Albedo(color(0.4f, 0.4f, 0.4f)), 
-		Fresnel(color(0.0f, 0.0f, 0.0f)), 
-		m(1),
-		Emmision(color(0, 0, 0)) {}
-	material(color a, color f, float r)
-		: Albedo(a), Fresnel(f), m(r) {}
-
-	color Albedo;
-	color Fresnel;
-	float m;
-	color Emmision;
-	int albedoTex;
-};*/
 
 //-----------------------------------------------------------------------------
 // Microfacet functions
@@ -181,14 +163,14 @@ float SmithG1Approx(vec3 v, vec3 m, vec3 norm, float alpha)
 //-----------------------------------------------------------------------------
 // Importance Sampling Functions
 //-----------------------------------------------------------------------------
-vec3 importanceSampleHalfVectorDiffuse(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir)
+vec3 importanceSampleHalfVectorDiffuse(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir)
 {
 	vec3 iDir = randCosineWeightedRay(norm);
 	return normalize(oDir + iDir);
 }
-vec3 importanceSampleHalfVectorMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir)
+vec3 importanceSampleHalfVectorMicrofacet(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir)
 {
-	float alpha_t = ml->m;
+	float alpha_t = ml->getRoughness(uv);
 
 	float d1 = nrand();
 	float d2 = nrand();
@@ -206,48 +188,48 @@ vec3 importanceSampleHalfVectorMicrofacet(materialLayer* ml, vec3 norm, float u,
 
 	return m;
 }
-vec3 importanceSampleHalfVector(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir)
+vec3 importanceSampleHalfVector(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir)
 {
 	if (ml->type == DIFFUSE)
-		return importanceSampleHalfVectorDiffuse(ml, norm, u, v, oDir);
+		return importanceSampleHalfVectorDiffuse(ml, norm, uv, oDir);
 	if (ml->type == MICROFACET)
-		return importanceSampleHalfVectorMicrofacet(ml, norm, u, v, oDir);
+		return importanceSampleHalfVectorMicrofacet(ml, norm, uv, oDir);
 	return norm;
 }
 
 //-----------------------------------------------------------------------------
 // Probability densities
 //-----------------------------------------------------------------------------
-float probabilityDensityDiffuse(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
+float probabilityDensityDiffuse(materialLayer* ml, vec3 norm, vec2 uv, vec3 half, vec3 iDir)
 {
 	float cosAngle = dot(iDir, norm);
 	return cosAngle / PI;
 }
-float probabilityDensityMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
+float probabilityDensityMicrofacet(materialLayer* ml, vec3 norm, vec2 uv, vec3 half, vec3 iDir)
 {
-	float alpha = ml->m;
+	float alpha = ml->getRoughness(uv);
 	
 	float pdf = BeckmanD(half, norm, alpha) * dot(half, norm);
 	pdf /= 4 * dot(iDir, half);
 	return pdf;
 }
-float probabilityDensity(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
+float probabilityDensity(materialLayer* ml, vec3 norm, vec2 uv, vec3 half, vec3 iDir)
 {
 	if (ml->type == DIFFUSE)
-		return probabilityDensityDiffuse(ml, norm, u, v, oDir, half, iDir);
+		return probabilityDensityDiffuse(ml, norm, uv, half, iDir);
 	if (ml->type == MICROFACET)
-		return probabilityDensityMicrofacet(ml, norm, u, v, oDir, half, iDir);
+		return probabilityDensityMicrofacet(ml, norm, uv, half, iDir);
 	return 1;
 }
 
 //-----------------------------------------------------------------------------
 // BRDFs
 //-----------------------------------------------------------------------------
-color BRDFDiffuse(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
+color BRDFDiffuse(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3 iDir)
 {
-	return ml->getHue(u, v) / PI;
+	return ml->getHue(uv) / PI;
 }
-color BRDFMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
+color BRDFMicrofacet(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3 iDir)
 {
 	vec3 lDir = iDir;
 	vec3 vDir = oDir;
@@ -259,7 +241,7 @@ color BRDFMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, 
 	float LDotN = dot(lDir, norm);
 	float ODotN = dot(oDir, norm);
 
-	float roughness = ml->m;
+	float roughness = ml->getRoughness(uv);
 	float alpha = roughness;
 
 	//color rf_o = mat.Fresnel;
@@ -280,34 +262,34 @@ color BRDFMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, 
 
 	return clamp(f_microfacet, 0, 10);
 }
-color BRDF(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 iDir)
+color BRDF(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3 iDir)
 {
 	if (ml->type == DIFFUSE)
-		return BRDFDiffuse(ml, norm, u, v, oDir, iDir);
+		return BRDFDiffuse(ml, norm, uv, oDir, iDir);
 	if (ml->type == MICROFACET)
-		return BRDFMicrofacet(ml, norm, u, v, oDir, iDir);
+		return BRDFMicrofacet(ml, norm, uv, oDir, iDir);
 	return color(1, 0, 1);
 }
 
 //-----------------------------------------------------------------------------
 // Weights
 //-----------------------------------------------------------------------------
-color sampleWeightDiffuse(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
+color sampleWeightDiffuse(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3 half, vec3 iDir)
 {
-	return ml->getHue(u, v);
+	return ml->getHue(uv);
 }
-color sampleWeightMicrofacet(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
+color sampleWeightMicrofacet(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3 half, vec3 iDir)
 {
-	float alpha = ml->m;
+	float alpha = ml->getRoughness(uv);
 	float  G = SmithG1Approx(iDir, half, norm, alpha) * SmithG1Approx(oDir, half, norm, alpha);
 	color final = color(1, 1, 1) * G * dot(oDir, half) / max(0.001, dot(iDir, norm) * dot(half, norm));
 	return clamp(final, 0, 10);
 }
-color sampleWeight(materialLayer* ml, vec3 norm, float u, float v, vec3 oDir, vec3 half, vec3 iDir)
+color sampleWeight(materialLayer* ml, vec3 norm, vec2 uv, vec3 oDir, vec3 half, vec3 iDir)
 {
 	if (ml->type == DIFFUSE)
-		return sampleWeightDiffuse(ml, norm, u, v, oDir, half, iDir);
+		return sampleWeightDiffuse(ml, norm, uv, oDir, half, iDir);
 	if (ml->type == MICROFACET)
-		return sampleWeightMicrofacet(ml, norm, u, v, oDir, half, iDir);
+		return sampleWeightMicrofacet(ml, norm, uv, oDir, half, iDir);
 	return color(1, 0, 1);
 }

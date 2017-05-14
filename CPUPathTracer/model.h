@@ -106,7 +106,8 @@ void addObj(RTCScene& scene, string filename, vec3 origin = vec3(), float scale 
 		}
 
 		//printf("%s\n", materials[shapes[i].mesh.material_ids[0]].specular_texname);
-		int fresnelTexID = loadTexture(materials[shapes[i].mesh.material_ids[0]].specular_texname);
+		int roughnessTexId = loadTexture(materials[shapes[i].mesh.material_ids[0]].specular_texname);
+		//roughnessTexId = -1;
 
 		if (shapes[i].mesh.texcoords.size() == 0)
 		{
@@ -133,10 +134,11 @@ void addObj(RTCScene& scene, string filename, vec3 origin = vec3(), float scale 
 		}
 		else
 		{
-			if (fresnelTexID != -1)
+			if (roughnessTexId != -1)
 			{
+				// TODO: figure out how to add specular maps without breaking everything
 				//printf("wat\n");
-				m->mat.addLayerBottom(createMicrofacetLayer(fresnelTexID, 0.001f));
+				m->mat.addLayerBottom(createMicrofacetLayer(0.1, roughnessTexId));
 			}
 			
 			m->mat.addLayerBottom(createDiffuseLayer(tId));

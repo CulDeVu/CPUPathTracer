@@ -14,6 +14,7 @@ HGLRC hGLRC;
 HPALETTE hPalette;
 
 bool running = true;
+bool GLRender_isNormalized = false;
 
 void init()
 {
@@ -63,11 +64,14 @@ void updateTex()
 	{
 		int x = i % imageWidth;
 		int y = imageHeight - i / imageWidth - 1;
-		color c = buffer[x][y].normalized();
+		color c = buffer[x][y];
+		if (!GLRender_isNormalized)
+			c = c.normalized();
 
-		c.r = floor(c.r * 2.f + 0.5) / 2.f;
-		c.g = floor(c.g * 2.f + 0.5) / 2.f;
-		c.b = floor(c.b * 2.f + 0.5) / 2.f;
+		// cell shading nonsense
+		/*c.r = floor(c.r * 1.f + 0.5) / 1.f;
+		c.g = floor(c.g * 1.f + 0.5) / 1.f;
+		c.b = floor(c.b * 1.f + 0.5) / 1.f;*/
 
 		pixels[3 * i + 0] = c.r;
 		pixels[3 * i + 1] = c.g;
